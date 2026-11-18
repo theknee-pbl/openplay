@@ -30,13 +30,14 @@ const SAMPLE_NAMES = [
 ];
 
 export default function App() {
-  // Navigation & Stage State: 'setup' | 'qualifying' | 'semis' | 'championship'
+  // Navigation & Stage State: 'setup' | 'qualifying' | 'playoffs' | 'championship'
   const [stage, setStage] = useState('setup');
   const [errorMsg, setErrorMsg] = useState('');
 
   // Setup configuration state:
   const [totalPlayers, setTotalPlayers] = useState(24);
   const [matchesPerTeam, setMatchesPerTeam] = useState(5);
+  const [playoffTeamCount, setPlayoffTeamCount] = useState(4); // Requirement 1: Configurable even number of playoff teams
 
   // Player Inputs array
   const [playerInputs, setPlayerInputs] = useState(Array(24).fill(''));
@@ -46,30 +47,17 @@ export default function App() {
   const [rounds, setRounds] = useState([]);
   const [activeRoundTab, setActiveRoundTab] = useState(1);
 
-  // Stage 2: Semifinals
-  const [top4Teams, setTop4Teams] = useState([]);
-  const [semiA, setSemiA] = useState({
-    team1: { p1: '', p2: '', label: 'Top 1A & Top 2A' },
-    team2: { p1: '', p2: '', label: 'Top 3A & Top 4A' },
-    score1: '',
-    score2: ''
-  });
-  const [semiB, setSemiB] = useState({
-    team1: { p1: '', p2: '', label: 'Top 1B & Top 2B' },
-    team2: { p1: '', p2: '', label: 'Top 3B & Top 4B' },
-    score1: '',
-    score2: ''
-  });
+  // Stage 2: Playoffs State
+  const [playoffRoundsCount, setPlayoffRoundsCount] = useState(1); // Requirement 3: How many rounds/games for playoff teams
+  const [qualifiedPlayoffTeams, setQualifiedPlayoffTeams] = useState([]);
+  // playoffRounds: array of round objects containing matches
+  const [playoffRounds, setPlayoffRounds] = useState([]);
+  const [activePlayoffRoundTab, setActivePlayoffRoundTab] = useState(1);
 
-  // Stage 3: Championship
-  const [finalistsA, setFinalistsA] = useState([]); // [p1, p2] from Semi A
-  const [finalistsB, setFinalistsB] = useState([]); // [p1, p2] from Semi B
-  const [champMatch, setChampMatch] = useState({
-    team1: { playerA: '', playerB: '' },
-    team2: { playerA: '', playerB: '' },
-    score1: '',
-    score2: ''
-  });
+  // Stage 3: Championship State
+  const [championshipGamesCount, setChampionshipGamesCount] = useState(1); // Requirement 6: Select how many games in championship
+  const [championshipFinalists, setChampionshipFinalists] = useState([]); // Requirement 4: Top 2 players/teams
+  const [championshipMatches, setChampionshipMatches] = useState([]);
 
   // --- HANDLER: Changing Total Players Count ---
   const handlePlayerCountChange = (newCount) => {
@@ -89,6 +77,18 @@ export default function App() {
     if (matchesPerTeam > maxAllowed) {
       setMatchesPerTeam(Math.max(1, maxAllowed));
     }
+    // Ensure playoff team count doesn't exceed total teams and is even
+    if (playoffTeamCount > newNumTeams) {
+      const adjusted = newNumTeams % 2 === 0 ? newNumTeams : Math.max(2, newNumTeams - 1);
+      setPlayoffTeamCount(adjusted);
+    }
+    setErrorMsg('');
+  };
+
+  const handlePlayoffTeamCountChange = (newCount) => {
+    const maxTeams = totalPlayers / 2;
+    if (newCount < 2 || newCount > maxTeams || newCount % 2 !== 0) return;
+    setPlayoffTeamCount(newCount);
     setErrorMsg('');
   };
 
@@ -146,6 +146,11 @@ export default function App() {
       return;
     }
 
+    if (playoffTeamCount > numTeams || playoffTeamCount % 2 !== 0) {
+      setErrorMsg(`Playoff team count must be an even number between 2 and ${numTeams}.`);
+      return;
+    }
+
     // 1. Randomize players into teams
     const shuffled = shuffleArray(cleaned);
     const createdTeams = [];
@@ -161,7 +166,7 @@ export default function App() {
 
     // 2. Randomized Scheduling with No-Repeat Opponent Constraints
     const generatedRounds = [];
-    const oppositionHistory = {}; // Tracks team IDs each team has already played against
+    const oppositionHistory = {};
     createdTeams.forEach(t => { oppositionHistory[t.id] = new Set(); });
 
     let scheduleFailed = false;
@@ -172,7 +177,6 @@ export default function App() {
       let roundValid = false;
       let attempts = 0;
 
-      // Backtracking / retrying mechanism for the round if pairing deadlocks
       while (!roundValid && attempts < 100) {
         attempts++;
         availableTeams = shuffleArray([...createdTeams]);
@@ -184,17 +188,15 @@ export default function App() {
           const t1 = availableTeams.pop();
           if (matchedInThisRound.has(t1.id)) continue;
 
-          // Find eligible opponents that haven't played t1 yet
           const eligibleOpponents = availableTeams.filter(
             t2 => !matchedInThisRound.has(t2.id) && !oppositionHistory[t1.id].has(t2.id)
           );
 
           if (eligibleOpponents.length === 0) {
             failed = true;
-            break; // Deadlock, retry shuffling available pool
+            break;
           }
 
-          // Pick a random valid opponent
           const t2 = eligibleOpponents[Math.floor(Math.random() * eligibleOpponents.length)];
           
           matchedInThisRound.add(t1.id);
@@ -236,7 +238,8 @@ export default function App() {
     setTeams(createdTeams);
     setRounds(generatedRounds);
     setActiveRoundTab(1);
-    setTop4Teams([]);
+    setQualifiedPlayoffTeams([]);
+    setPlayoffRounds([]);
     setErrorMsg('');
     setStage('qualifying');
   };
@@ -358,134 +361,368 @@ export default function App() {
     setErrorMsg('');
   };
 
-  const advanceToSemifinals = () => {
+  // --- TRANSITION TO PLAYOFFS (Requirements 2 & 3) ---
+  const advanceToPlotform = () => {
     if (completedQualifyingMatches < totalQualifyingMatchesCount) {
-      setErrorMsg(`Please complete all ${totalQualifyingMatchesCount} qualifying matches first (${completedQualifyingMatches}/${totalQualifyingMatchesCount} completed, ties not allowed).`);
+      setErrorMsg(`Please complete all ${totalQualifyingMatchesCount} qualifying matches first (${completedQualifyingMatches}/${totalQualifyingMatchesCount} completed).`);
       return;
     }
 
-    const top4 = ladderStandings.slice(0, 4);
-    setTop4Teams(top4);
+    const topTeams = ladderStandings.slice(0, playoffTeamCount);
+    
+    // Requirement 2: In the playoffs, randomize doubles players. 
+    // However, if exactly 6 teams proceed to the playoffs, swap player in top 2 teams to make doubles.
+    let playoffTeamsConstructed = [];
 
-    setSemiA({
-      team1: {
-        p1: top4[0].playerA,
-        p2: top4[1].playerA,
-        label: `Top 1A (${top4[0].name}) & Top 2A (${top4[1].name})`
-      },
-      team2: {
-        p1: top4[2].playerA,
-        p2: top4[3].playerA,
-        label: `Top 3A (${top4[2].name}) & Top 4A (${top4[3].name})`
-      },
-      score1: '',
-      score2: ''
-    });
+    if (playoffTeamCount === 6) {
+      // Top 2 teams special swap: Team 1 (A1, B1) and Team 2 (A2, B2) -> swap player B1 and B2 (or A/B)
+      // Let's create new teams for all top 6 with randomized or specific rules.
+      // Rule states: "if 6teams in playoff, swap player in top 2 teams to make doubles"
+      const t1 = topTeams[0];
+      const t2 = topTeams[1];
+      
+      const modifiedT1 = { id: t1.id, name: `${t1.name} (Mod)`, playerA: t1.playerA, playerB: t2.playerB };
+      const modifiedT2 = { id: t2.id, name: `${t2.name} (Mod)`, playerA: t2.playerA, playerB: t1.playerB };
+      
+      const remainingTeams = topTeams.slice(2).map(t => {
+        const shuffledPlayers = shuffleArray([t.playerA, t.playerB]);
+        return { id: t.id, name: t.name, playerA: shuffledPlayers[0], playerB: shuffledPlayers[1] };
+      });
 
-    setSemiB({
-      team1: {
-        p1: top4[0].playerB,
-        p2: top4[1].playerB,
-        label: `Top 1B (${top4[0].name}) & Top 2B (${top4[1].name})`
-      },
-      team2: {
-        p1: top4[2].playerB,
-        p2: top4[3].playerB,
-        label: `Top 3B (${top4[2].name}) & Top 4B (${top4[3].name})`
-      },
-      score1: '',
-      score2: ''
-    });
+      playoffTeamsConstructed = [modifiedT1, modifiedT2, ...remainingTeams];
+    } else {
+      // Randomize doubles players for each playoff team from the qualified group players
+      const allPlayersInPlayoffs = [];
+      topTeams.forEach(t => {
+        allPlayersInPlayoffs.push(t.playerA, t.playerB);
+      });
+      const shuffledPlayoffPlayers = shuffleArray(allPlayersInPlayoffs);
+      
+      playoffTeamsConstructed = [];
+      for (let i = 0; i < playoffTeamCount; i++) {
+        const origTeam = topTeams[i];
+        playoffTeamsConstructed.push({
+          id: origTeam.id,
+          name: origTeam.name,
+          playerA: shuffledPlayoffPlayers[i * 2],
+          playerB: shuffledPlayoffPlayers[i * 2 + 1]
+        });
+      }
+    }
 
+    setQualifiedPlayoffTeams(playoffTeamsConstructed);
+
+    // Build Playoff Schedule based on playoffRoundsCount rounds (Round-Robin or Bracket style rounds)
+    // Let's create single round-robin rounds among the playoff teams for the specified number of playoff rounds
+    const generatedPlayoffRounds = [];
+    const pOppositionHistory = {};
+    playoffTeamsConstructed.forEach(t => { pOppositionHistory[t.id] = new Set(); });
+
+    let pScheduleFailed = false;
+    const maxPRounds = playoffTeamCount - 1;
+    const actualPRoundsToBuild = Math.min(playoffRoundsCount, maxPRounds);
+
+    for (let r = 1; r <= actualPRoundsToBuild; r++) {
+      const matches = [];
+      let available = shuffleArray([...playoffTeamsConstructed]);
+      let roundValid = false;
+      let attempts = 0;
+
+      while (!roundValid && attempts < 100) {
+        attempts++;
+        available = shuffleArray([...playoffTeamsConstructed]);
+        const currentPairs = [];
+        const matchedThisRound = new Set();
+        let failed = false;
+
+        while (available.length > 0) {
+          const t1 = available.pop();
+          if (matchedThisRound.has(t1.id)) continue;
+
+          const eligible = available.filter(
+            t2 => !matchedThisRound.has(t2.id) && !pOppositionHistory[t1.id].has(t2.id)
+          );
+
+          if (eligible.length === 0) {
+            failed = true;
+            break;
+          }
+
+          const t2 = eligible[Math.floor(Math.random() * eligible.length)];
+          matchedThisRound.add(t1.id);
+          matchedThisRound.add(t2.id);
+          currentPairs.push({ t1, t2 });
+        }
+
+        if (!failed && currentPairs.length === playoffTeamCount / 2) {
+          roundValid = true;
+          currentPairs.forEach((pair, idx) => {
+            const { t1, t2 } = pair;
+            pOppositionHistory[t1.id].add(t2.id);
+            pOppositionHistory[t2.id].add(t1.id);
+
+            matches.push({
+              id: `PR${r}-M${idx + 1}`,
+              round: r,
+              team1Id: t1.id,
+              team2Id: t2.id,
+              score1: '',
+              score2: ''
+            });
+          });
+        }
+      }
+
+      if (!roundValid) {
+        pScheduleFailed = true;
+        break;
+      }
+      generatedPlayoffRounds.push(matches);
+    }
+
+    if (pScheduleFailed && generatedPlayoffRounds.length === 0) {
+      // Fallback simple pairing for 1st playoff round if constraints tight
+      const matches = [];
+      for (let i = 0; i < playoffTeamsConstructed.length; i += 2) {
+        matches.push({
+          id: `PR1-M${i / 2 + 1}`,
+          round: 1,
+          team1Id: playoffTeamsConstructed[i].id,
+          team2Id: playoffTeamsConstructed[i + 1].id,
+          score1: '',
+          score2: ''
+        });
+      }
+      generatedPlayoffRounds.push(matches);
+    }
+
+    setPlayoffRounds(generatedPlayoffRounds);
+    setActivePlayoffRoundTab(1);
     setErrorMsg('');
-    setStage('semis');
+    setStage('playoffs');
   };
 
-  const simulateSemis = () => {
-    const [sa1, sa2] = generateRandomScores(15, 21);
-    const [sb1, sb2] = generateRandomScores(15, 21);
-    setSemiA(prev => ({ ...prev, score1: sa1, score2: sa2 }));
-    setSemiB(prev => ({ ...prev, score1: sb1, score2: sb2 }));
+  const playoffTeamMap = useMemo(() => {
+    const map = {};
+    qualifiedPlayoffTeams.forEach(t => { map[t.id] = t; });
+    return map;
+  }, [qualifiedPlayoffTeams]);
+
+  const playoffStandings = useMemo(() => {
+    if (qualifiedPlayoffTeams.length === 0) return [];
+    const stats = {};
+    qualifiedPlayoffTeams.forEach(t => {
+      stats[t.id] = {
+        ...t,
+        played: 0,
+        wins: 0,
+        losses: 0,
+        pf: 0,
+        pa: 0,
+        diff: 0
+      };
+    });
+
+    playoffRounds.forEach(roundMatches => {
+      roundMatches.forEach(m => {
+        if (m.score1 !== '' && m.score2 !== '') {
+          const s1 = parseInt(m.score1, 10);
+          const s2 = parseInt(m.score2, 10);
+          if (!isNaN(s1) && !isNaN(s2) && s1 !== s2) {
+            const st1 = stats[m.team1Id];
+            const st2 = stats[m.team2Id];
+            if (st1 && st2) {
+              st1.played += 1;
+              st2.played += 1;
+              st1.pf += s1;
+              st1.pa += s2;
+              st2.pf += s2;
+              st2.pa += s1;
+              if (s1 > s2) {
+                st1.wins += 1;
+                st2.losses += 1;
+              } else {
+                st2.wins += 1;
+                st1.losses += 1;
+              }
+            }
+          }
+        }
+      });
+    });
+
+    return Object.values(stats)
+      .map(s => ({ ...s, diff: s.pf - s.pa }))
+      .sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        if (b.diff !== a.diff) return b.diff - a.diff;
+        return b.pf - a.pf;
+      });
+  }, [qualifiedPlayoffTeams, playoffRounds]);
+
+  const totalPlayoffMatchesCount = useMemo(() => {
+    let count = 0;
+    playoffRounds.forEach(r => count += r.length);
+    return count;
+  }, [playoffRounds]);
+
+  const completedPlayoffMatches = useMemo(() => {
+    let count = 0;
+    playoffRounds.forEach(r => r.forEach(m => {
+      const s1 = parseInt(m.score1, 10);
+      const s2 = parseInt(m.score2, 10);
+      if (m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2) {
+        count++;
+      }
+    }));
+    return count;
+  }, [playoffRounds]);
+
+  const handlePlayoffScoreChange = (roundIdx, matchIdx, field, val) => {
+    if (val !== '' && !/^\d+$/.test(val)) return;
+    setPlayoffRounds(prev => {
+      const copy = prev.map(r => r.map(m => ({ ...m })));
+      copy[roundIdx][matchIdx][field] = val;
+      return copy;
+    });
     setErrorMsg('');
   };
 
-  const buildCrossPairedChampionship = (winnersFromA, winnersFromB) => {
-    const shufA = shuffleArray(winnersFromA);
-    const shufB = shuffleArray(winnersFromB);
-
-    const pair1 = shuffleArray([shufA[0], shufB[0]]);
-    const pair2 = shuffleArray([shufA[1], shufB[1]]);
-
-    setChampMatch({
-      team1: { playerA: pair1[0], playerB: pair1[1] },
-      team2: { playerA: pair2[0], playerB: pair2[1] },
-      score1: '',
-      score2: ''
+  const simulateSinglePlayoffRound = (roundIdx) => {
+    setPlayoffRounds(prev => {
+      const copy = prev.map(r => r.map(m => ({ ...m })));
+      copy[roundIdx] = copy[roundIdx].map(m => {
+        const [s1, s2] = generateRandomScores(10, 21);
+        return { ...m, score1: s1, score2: s2 };
+      });
+      return copy;
     });
+    setErrorMsg('');
   };
 
+  const simulateAllPlayoffs = () => {
+    setPlayoffRounds(prev =>
+      prev.map(roundMatches =>
+        roundMatches.map(m => {
+          if (m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2) {
+            return m;
+          }
+          const [s1, s2] = generateRandomScores(10, 21);
+          return { ...m, score1: s1, score2: s2 };
+        })
+      )
+    );
+    setErrorMsg('');
+  };
+
+  // --- TRANSITION TO CHAMPIONSHIP (Requirements 4 & 5 & 6) ---
   const advanceToChampionship = () => {
-    const sa1 = parseInt(semiA.score1, 10);
-    const sa2 = parseInt(semiA.score2, 10);
-    const sb1 = parseInt(semiB.score1, 10);
-    const sb2 = parseInt(semiB.score2, 10);
-
-    if (
-      isNaN(sa1) || isNaN(sa2) || sa1 === sa2 ||
-      isNaN(sb1) || isNaN(sb2) || sb1 === sb2
-    ) {
-      setErrorMsg('Please enter valid, non-tied scores for both Semi-Final A and Semi-Final B.');
+    if (completedPlayoffMatches < totalPlayoffMatchesCount) {
+      setErrorMsg(`Please complete all playoff matches first (${completedPlayoffMatches}/${totalPlayoffMatchesCount} completed).`);
       return;
     }
 
-    const winnersA = sa1 > sa2
-      ? [semiA.team1.p1, semiA.team1.p2]
-      : [semiA.team2.p1, semiA.team2.p2];
+    // Requirement 4: Rank the playoff teams and have the top 2 players/teams proceed to the championship.
+    // If teams are ranked, the top 2 teams or top 2 players overall from the playoff standings proceed.
+    const topPlayoffTeams = playoffStandings.slice(0, 2);
+    setChampionshipFinalists(topPlayoffTeams);
 
-    const winnersB = sb1 > sb2
-      ? [semiB.team1.p1, semiB.team1.p2]
-      : [semiB.team2.p1, semiB.team2.p2];
+    // Requirement 5: Swap players of the 2 championship teams.
+    // Team 1 has (p1A, p1B) and Team 2 has (p2A, p2B). Swap players between them to form new championship matchup!
+    const t1 = topPlayoffTeams[0];
+    const t2 = topPlayoffTeams[1];
 
-    setFinalistsA(winnersA);
-    setFinalistsB(winnersB);
-    buildCrossPairedChampionship(winnersA, winnersB);
+    const swappedTeam1Players = [t1.playerA, t2.playerA];
+    const swappedTeam2Players = [t1.playerB, t2.playerB];
+
+    // Requirement 6: Select how many games in the championship
+    const gamesCount = Math.max(1, championshipGamesCount);
+    const matches = [];
+    for (let g = 1; g <= gamesCount; g++) {
+      matches.push({
+        id: `Champ-G${g}`,
+        gameNumber: g,
+        team1: { playerA: swappedTeam1Players[0], playerB: swappedTeam1Players[1], name: 'Finalist Team 1' },
+        team2: { playerA: swappedTeam2Players[0], playerB: swappedTeam2Players[1], name: 'Finalist Team 2' },
+        score1: '',
+        score2: ''
+      });
+    }
+
+    setChampionshipMatches(matches);
     setErrorMsg('');
     setStage('championship');
   };
 
-  const reshuffleChampionship = () => {
-    if (finalistsA.length === 2 && finalistsB.length === 2) {
-      buildCrossPairedChampionship(finalistsA, finalistsB);
-      setErrorMsg('');
-    }
-  };
-
-  const simulateChampionship = () => {
-    const [c1, c2] = generateRandomScores(15, 21);
-    setChampMatch(prev => ({ ...prev, score1: c1, score2: c2 }));
+  const handleChampionshipScoreChange = (matchIdx, field, val) => {
+    if (val !== '' && !/^\d+$/.test(val)) return;
+    setChampionshipMatches(prev => {
+      const copy = prev.map(m => ({ ...m }));
+      copy[matchIdx][field] = val;
+      return copy;
+    });
     setErrorMsg('');
   };
 
-  const championTeam = useMemo(() => {
-    const c1 = parseInt(champMatch.score1, 10);
-    const c2 = parseInt(champMatch.score2, 10);
-    if (isNaN(c1) || isNaN(c2) || c1 === c2) return null;
-    return c1 > c2
-      ? { name: 'Championship Team 1', ...champMatch.team1, score: `${c1} - ${c2}` }
-      : { name: 'Championship Team 2', ...champMatch.team2, score: `${c2} - ${c1}` };
-  }, [champMatch]);
+  const simulateChampionshipSeries = () => {
+    setChampionshipMatches(prev =>
+      prev.map(m => {
+        const [s1, s2] = generateRandomScores(15, 21);
+        return { ...m, score1: s1, score2: s2 };
+      })
+    );
+    setErrorMsg('');
+  };
+
+  const championshipWinner = useMemo(() => {
+    if (championshipMatches.length === 0) return null;
+    let t1Wins = 0;
+    let t2Wins = 0;
+    let allCompleted = true;
+
+    championshipMatches.forEach(m => {
+      const s1 = parseInt(m.score1, 10);
+      const s2 = parseInt(m.score2, 10);
+      if (isNaN(s1) || isNaN(s2) || s1 === s2) {
+        allCompleted = false;
+      } else if (s1 > s2) {
+        t1Wins++;
+      } else {
+        t2Wins++;
+      }
+    });
+
+    if (!allCompleted && t1Wins === 0 && t2Wins === 0) return null;
+
+    if (t1Wins > t2Wins) {
+      return {
+        name: 'Championship Team 1',
+        playerA: championshipMatches[0].team1.playerA,
+        playerB: championshipMatches[0].team1.playerB,
+        wins: `${t1Wins} - ${t2Wins} Games`
+      };
+    } else if (t2Wins > t1Wins) {
+      return {
+        name: 'Championship Team 2',
+        playerA: championshipMatches[0].team2.playerA,
+        playerB: championshipMatches[0].team2.playerB,
+        wins: `${t2Wins} - ${t1Wins} Games`
+      };
+    }
+    return null;
+  }, [championshipMatches]);
 
   const resetTournament = () => {
     setStage('setup');
     setTeams([]);
     setRounds([]);
-    setTop4Teams([]);
-    setFinalistsA([]);
-    setFinalistsB([]);
+    setQualifiedPlayoffTeams([]);
+    setPlayoffRounds([]);
+    setChampionshipFinalists([]);
+    setChampionshipMatches([]);
     setErrorMsg('');
   };
 
-  // --- UI BADGE COMPONENTS (Blue Theme) ---
   const BadgeA = () => (
     <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold tracking-wider uppercase rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shadow-2xs shrink-0">
       A
@@ -512,7 +749,7 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h1 className="text-base sm:text-lg font-bold tracking-tight leading-tight truncate bg-gradient-to-r from-slate-900 via-slate-800 to-blue-950 dark:from-white dark:to-blue-200 bg-clip-text text-transparent">
-                Dynamic Pairings
+                Dynamic Playoff Tournament
               </h1>
             </div>
           </div>
@@ -536,8 +773,8 @@ export default function App() {
             {[
               { id: 'setup', label: '0. Roster & Config Setup', icon: UserPlus, enabled: true },
               { id: 'qualifying', label: '1. Qualifying Ladder', icon: ListOrdered, enabled: teams.length > 0 },
-              { id: 'semis', label: '2. Split Semifinals', icon: Swords, enabled: top4Teams.length === 4 },
-              { id: 'championship', label: '3. Championship', icon: Trophy, enabled: finalistsA.length === 2 }
+              { id: 'playoffs', label: '2. Playoff Stage', icon: Swords, enabled: qualifiedPlayoffTeams.length > 0 },
+              { id: 'championship', label: '3. Championship Series', icon: Trophy, enabled: championshipFinalists.length === 2 }
             ].map((tab, index) => {
               const Icon = tab.icon;
               const isActive = stage === tab.id;
@@ -574,7 +811,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Global Error Banner */}
         {errorMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-sm shadow-sm animate-shake">
+          <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-sm shadow-sm">
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
             <span className="font-medium break-words">{errorMsg}</span>
           </div>
@@ -586,11 +823,11 @@ export default function App() {
         {stage === 'setup' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-6 sm:p-8 shadow-xs">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
                 {/* Player Count Selector */}
                 <div>
                   <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Total Number of Players (Must be Even, 4 - 32)
+                    Total Players (Even, 4 - 32)
                   </label>
                   <div className="flex items-center gap-3">
                     <button
@@ -600,7 +837,7 @@ export default function App() {
                     >
                       <Minus className="w-5 h-5" />
                     </button>
-                    <div className="flex-1 min-w-0 text-center py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-base sm:text-lg truncate">
+                    <div className="flex-1 min-w-0 text-center py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-sm sm:text-base truncate">
                       {totalPlayers} Players <span className="text-xs font-normal text-slate-500">({numTeams} Teams)</span>
                     </div>
                     <button
@@ -611,38 +848,65 @@ export default function App() {
                       <Plus className="w-5 h-5" />
                     </button>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
-                    Players are randomly paired into {numTeams} teams of 2.
-                  </p>
                 </div>
 
-                {/* Matches Per Team Selector */}
+                {/* Requirement 1: Playoff Teams Count (Even Number) */}
                 <div>
                   <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Matches Per Team in Qualifying Round (1 - {maxMatchesPerTeam})
+                    Playoff Teams (Even, 2 - {numTeams})
                   </label>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => setMatchesPerTeam(Math.max(1, matchesPerTeam - 1))}
-                      disabled={matchesPerTeam <= 1}
+                      onClick={() => handlePlayoffTeamCountChange(Math.max(2, playoffTeamCount - 2))}
+                      disabled={playoffTeamCount <= 2}
                       className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
                     >
                       <Minus className="w-5 h-5" />
                     </button>
-                    <div className="flex-1 min-w-0 text-center py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-base sm:text-lg truncate">
-                      {matchesPerTeam} Rounds <span className="text-xs font-normal text-slate-500">({matchesPerTeam * (numTeams / 2)} Total)</span>
+                    <div className="flex-1 min-w-0 text-center py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-sm sm:text-base truncate">
+                      {playoffTeamCount} Teams <span className="text-xs font-normal text-slate-500">{playoffTeamCount === 6 ? '(Special 6-Team Swap)' : ''}</span>
                     </div>
                     <button
-                      onClick={() => setMatchesPerTeam(Math.min(maxMatchesPerTeam, matchesPerTeam + 1))}
-                      disabled={matchesPerTeam >= maxMatchesPerTeam}
+                      onClick={() => handlePlayoffTeamCountChange(Math.min(numTeams, playoffTeamCount + 2))}
+                      disabled={playoffTeamCount >= numTeams || (playoffTeamCount + 2) > numTeams}
                       className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
                     >
                       <Plus className="w-5 h-5" />
                     </button>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
-                    Determines how many round-robin rounds are scheduled.
-                  </p>
+                </div>
+
+                {/* Requirement 3: Playoff Rounds Count & Requirement 6: Championship Games */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
+                    Playoff Rounds & Champ Games
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <select
+                        value={playoffRoundsCount}
+                        onChange={(e) => setPlayoffRoundsCount(parseInt(e.target.value, 10))}
+                        aria-label="Playoff Rounds Count"
+                        className="w-full py-2.5 px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold"
+                      >
+                        {[1, 2, 3, 4, 5].map(r => (
+                          <option key={r} value={r}>{r} Playoff Round{r > 1 ? 's' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <select
+                        value={championshipGamesCount}
+                        onChange={(e) => setChampionshipGamesCount(parseInt(e.target.value, 10))}
+                        aria-label="Championship Games Count"
+                        className="w-full py-2.5 px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold"
+                      >
+                        {[1, 3, 5, 7].map(g => (
+                          <option key={g} value={g}>{g} Champ Game{g > 1 ? 's' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -715,7 +979,7 @@ export default function App() {
                   </span>
                 </div>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Each team plays {matchesPerTeam} rounds. Top 4 teams on the ladder advance to Semifinals.
+                  Top {playoffTeamCount} teams on the ladder advance to the Playoffs.
                 </p>
               </div>
 
@@ -735,14 +999,14 @@ export default function App() {
                   <span>Simulate All</span>
                 </button>
                 <button
-                  onClick={advanceToSemifinals}
+                  onClick={advanceToPlotform}
                   className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition active:scale-98 cursor-pointer ${
                     completedQualifyingMatches === rounds.reduce((acc, r) => acc + r.length, 0)
                       ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
                       : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
                   }`}
                 >
-                  <span>Proceed to Semis</span>
+                  <span>Proceed to Playoffs</span>
                   <ChevronRight className="w-4 h-4 shrink-0" />
                 </button>
               </div>
@@ -921,7 +1185,7 @@ export default function App() {
                     <h3 className="font-bold text-sm sm:text-base truncate">Live Ladder Standings</h3>
                   </div>
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shrink-0">
-                    Top 4 Qualify
+                    Top {playoffTeamCount} Qualify
                   </span>
                 </div>
 
@@ -939,12 +1203,12 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-sm">
                       {ladderStandings.map((team, idx) => {
-                        const isTop4 = idx < 4;
+                        const isQualifying = idx < playoffTeamCount;
                         return (
                           <tr
                             key={team.id}
                             className={`transition-colors ${
-                              isTop4
+                              isQualifying
                                 ? 'bg-blue-50/60 dark:bg-blue-950/30'
                                 : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                             }`}
@@ -952,7 +1216,7 @@ export default function App() {
                             <td className="py-3 pl-4 pr-2 font-mono font-bold">
                               <span
                                 className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
-                                  isTop4
+                                  isQualifying
                                     ? 'bg-blue-600 text-white shadow-2xs'
                                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                                 }`}
@@ -963,7 +1227,7 @@ export default function App() {
                             <td className="py-3 px-2 min-w-0 max-w-[160px] sm:max-w-[200px]">
                               <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0">
                                 <span className="truncate">{team.name}</span>
-                                {isTop4 && (
+                                {isQualifying && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 shrink-0">
                                     Q
                                   </span>
@@ -1008,29 +1272,40 @@ export default function App() {
         )}
 
         {/* ===================================================================== */}
-        {/* STAGE 2: SEMIFINALS                                                   */}
+        {/* STAGE 2: PLAYOFFS STAGE                                               */}
         {/* ===================================================================== */}
-        {stage === 'semis' && (
+        {stage === 'playoffs' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-5">
               <div className="min-w-0">
-                <h2 className="text-xl font-bold tracking-tight truncate">Stage 2: Split A & B Semifinals</h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-xl font-bold tracking-tight truncate">Stage 2: Playoffs ({playoffTeamCount} Teams, {playoffRounds.length} Rounds)</h2>
+                  {playoffTeamCount === 6 && (
+                    <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                      Top 2 Teams Swapped for Doubles
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Top 4 qualifying teams split into separate <BadgeA /> and <BadgeB /> brackets: (1 & 2) vs (3 & 4).
+                  Playoff doubles randomized. Top 2 ranked teams/players advance to Championship.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
-                  onClick={simulateSemis}
+                  onClick={simulateAllPlayoffs}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-98 cursor-pointer shadow-2xs"
                 >
                   <Play className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Simulate Both Semis</span>
+                  <span>Simulate All Playoffs</span>
                 </button>
                 <button
                   onClick={advanceToChampionship}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition active:scale-98 cursor-pointer"
+                  className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition active:scale-98 cursor-pointer ${
+                    completedPlayoffMatches === totalPlayoffMatchesCount
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                  }`}
                 >
                   <span>Proceed to Championship</span>
                   <ChevronRight className="w-4 h-4 shrink-0" />
@@ -1038,212 +1313,246 @@ export default function App() {
               </div>
             </div>
 
-            {/* Top 4 Qualifiers Summary Strip */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {top4Teams.map((t, idx) => (
-                <div
-                  key={t.id}
-                  className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 p-4 flex items-center gap-3.5 shadow-xs min-w-0"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/20">
-                    #{idx + 1}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-bold text-sm truncate">{t.name} <span className="text-xs text-slate-400 font-normal">({t.wins}W)</span></div>
-                    <div className="space-y-1 mt-1.5">
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 min-w-0">
-                        <BadgeA /> <span className="truncate">{t.playerA}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 min-w-0">
-                        <BadgeB /> <span className="truncate">{t.playerB}</span>
-                      </div>
+            {/* Playoff Teams Overview Grid */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 shadow-xs">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-3.5 truncate">
+                Qualified Playoff Teams & Randomized/Swapped Doubles
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {qualifiedPlayoffTeams.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-3 rounded-2xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 min-w-0"
+                  >
+                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5 truncate">
+                      {t.name}
+                    </div>
+                    <div className="flex items-center gap-1.5 py-0.5 min-w-0 text-xs font-medium">
+                      <BadgeA /> <span className="truncate">{t.playerA}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 py-0.5 mt-0.5 min-w-0 text-xs font-medium">
+                      <BadgeB /> <span className="truncate">{t.playerB}</span>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
 
-            {/* Two Semifinal Match Cards */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* SEMI-FINAL A */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border-2 border-blue-200/80 dark:border-blue-900/60 p-6 sm:p-7 shadow-xs space-y-5 min-w-0">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <BadgeA />
-                    <h3 className="text-lg font-bold truncate">Semi-Final A Bracket</h3>
+            {/* Playoff Matches & Standings Grid */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+              {/* Left Column: Playoff Round Schedule */}
+              <div className="xl:col-span-7 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
+                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/40">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    {playoffRounds.map((roundMatches, idx) => {
+                      const rNum = idx + 1;
+                      const doneCount = roundMatches.filter(
+                        m => m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2
+                      ).length;
+                      const isComplete = doneCount === roundMatches.length;
+                      return (
+                        <button
+                          key={rNum}
+                          onClick={() => setActivePlayoffRoundTab(rNum)}
+                          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                            activePlayoffRoundTab === rNum
+                              ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/80'
+                          }`}
+                        >
+                          <span>Playoff Round {rNum}</span>
+                          {isComplete && (
+                            <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${activePlayoffRoundTab === rNum ? 'text-blue-200' : 'text-emerald-500'}`} />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 shrink-0">
-                    Winners Advance
-                  </span>
+
+                  <button
+                    onClick={() => simulateSinglePlayoffRound(activePlayoffRoundTab - 1)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition cursor-pointer shrink-0"
+                  >
+                    <Play className="w-3.5 h-3.5 shrink-0" />
+                    <span>Simulate PR{activePlayoffRoundTab}</span>
+                  </button>
                 </div>
 
-                {/* Team 1 */}
-                <div className={`p-4.5 rounded-2xl border transition-all min-w-0 ${
-                  parseInt(semiA.score1, 10) > parseInt(semiA.score2, 10)
-                    ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 shadow-2xs'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between gap-4 min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <span className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 truncate block">
-                        {semiA.team1.label}
-                      </span>
-                      <div className="mt-2.5 space-y-2 min-w-0">
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeA /> <span className="truncate">{semiA.team1.p1}</span>
+                <div className="p-4 sm:p-5 space-y-3.5">
+                  {(playoffRounds[activePlayoffRoundTab - 1] || []).map((match, mIdx) => {
+                    const t1 = playoffTeamMap[match.team1Id];
+                    const t2 = playoffTeamMap[match.team2Id];
+                    if (!t1 || !t2) return null;
+
+                    const s1 = parseInt(match.score1, 10);
+                    const s2 = parseInt(match.score2, 10);
+                    const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
+                    const t1Won = hasWinner && s1 > s2;
+                    const t2Won = hasWinner && s2 > s1;
+
+                    return (
+                      <div
+                        key={match.id}
+                        className="p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/30 flex flex-col sm:flex-row items-center justify-between gap-3.5 transition-all min-w-0"
+                      >
+                        {/* Team 1 */}
+                        <div className={`flex-1 w-full sm:w-auto text-left sm:text-right min-w-0 ${t1Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
+                          <div className="text-sm font-bold flex items-center sm:justify-end gap-2 min-w-0">
+                            <span className="truncate">{t1.name}</span>
+                            {t1Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
+                          </div>
+                          <div className="mt-1.5 space-y-1">
+                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
+                              <span className="truncate">{t1.playerA}</span>
+                              <BadgeA />
+                            </div>
+                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
+                              <span className="truncate">{t1.playerB}</span>
+                              <BadgeB />
+                            </div>
+                          </div>
                         </div>
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeA /> <span className="truncate">{semiA.team1.p2}</span>
+
+                        {/* Scores */}
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={match.score1}
+                            onChange={(e) => handlePlayoffScoreChange(activePlayoffRoundTab - 1, mIdx, 'score1', e.target.value)}
+                            placeholder="0"
+                            aria-label={`${t1.name} playoff score`}
+                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
+                              t1Won
+                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
+                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
+                            }`}
+                          />
+                          <span className="text-xs font-extrabold text-slate-400 uppercase tracking-widest shrink-0">vs</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={match.score2}
+                            onChange={(e) => handlePlayoffScoreChange(activePlayoffRoundTab - 1, mIdx, 'score2', e.target.value)}
+                            placeholder="0"
+                            aria-label={`${t2.name} playoff score`}
+                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
+                              t2Won
+                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
+                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
+                            }`}
+                          />
+                        </div>
+
+                        {/* Team 2 */}
+                        <div className={`flex-1 w-full sm:w-auto text-left min-w-0 ${t2Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
+                          <div className="text-sm font-bold flex items-center gap-2 min-w-0">
+                            <span className="truncate">{t2.name}</span>
+                            {t2Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
+                          </div>
+                          <div className="mt-1.5 space-y-1">
+                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
+                              <BadgeA />
+                              <span className="truncate">{t2.playerA}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
+                              <BadgeB />
+                              <span className="truncate">{t2.playerB}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={semiA.score1}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setSemiA(prev => ({ ...prev, score1: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs shrink-0"
-                    />
-                  </div>
-                </div>
-
-                <div className="text-center text-xs font-extrabold uppercase tracking-widest text-slate-400 py-1">
-                  — VERSUS —
-                </div>
-
-                {/* Team 2 */}
-                <div className={`p-4.5 rounded-2xl border transition-all min-w-0 ${
-                  parseInt(semiA.score2, 10) > parseInt(semiA.score1, 10)
-                    ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 shadow-2xs'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between gap-4 min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <span className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 truncate block">
-                        {semiA.team2.label}
-                      </span>
-                      <div className="mt-2.5 space-y-2 min-w-0">
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeA /> <span className="truncate">{semiA.team2.p1}</span>
-                        </div>
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeA /> <span className="truncate">{semiA.team2.p2}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={semiA.score2}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setSemiA(prev => ({ ...prev, score2: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs shrink-0"
-                    />
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* SEMI-FINAL B */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border-2 border-sky-200/80 dark:border-sky-900/60 p-6 sm:p-7 shadow-xs space-y-5 min-w-0">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 gap-2">
+              {/* Right Column: Playoff Standings (Requirement 4: Top 2 proceed to championship) */}
+              <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
+                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <BadgeB />
-                    <h3 className="text-lg font-bold truncate">Semi-Final B Bracket</h3>
+                    <ListOrdered className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <h3 className="font-bold text-sm sm:text-base truncate">Playoff Standings</h3>
                   </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/80 text-sky-700 dark:text-sky-400 shrink-0">
-                    Winners Advance
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shrink-0">
+                    Top 2 ➔ Championship
                   </span>
                 </div>
 
-                {/* Team 1 */}
-                <div className={`p-4.5 rounded-2xl border transition-all min-w-0 ${
-                  parseInt(semiB.score1, 10) > parseInt(semiB.score2, 10)
-                    ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 shadow-2xs'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between gap-4 min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <span className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-400 truncate block">
-                        {semiB.team1.label}
-                      </span>
-                      <div className="mt-2.5 space-y-2 min-w-0">
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeB /> <span className="truncate">{semiB.team1.p1}</span>
-                        </div>
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeB /> <span className="truncate">{semiB.team1.p2}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={semiB.score1}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setSemiB(prev => ({ ...prev, score1: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-2xs shrink-0"
-                    />
-                  </div>
-                </div>
-
-                <div className="text-center text-xs font-extrabold uppercase tracking-widest text-slate-400 py-1">
-                  — VERSUS —
-                </div>
-
-                {/* Team 2 */}
-                <div className={`p-4.5 rounded-2xl border transition-all min-w-0 ${
-                  parseInt(semiB.score2, 10) > parseInt(semiB.score1, 10)
-                    ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 shadow-2xs'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between gap-4 min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <span className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-400 truncate block">
-                        {semiB.team2.label}
-                      </span>
-                      <div className="mt-2.5 space-y-2 min-w-0">
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeB /> <span className="truncate">{semiB.team2.p1}</span>
-                        </div>
-                        <div className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
-                          <BadgeB /> <span className="truncate">{semiB.team2.p2}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={semiB.score2}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setSemiB(prev => ({ ...prev, score2: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-2xs shrink-0"
-                    />
-                  </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[340px]">
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50/40 dark:bg-slate-900/20">
+                        <th className="py-3 pl-4 pr-2">Rank</th>
+                        <th className="py-3 px-2">Team & Players</th>
+                        <th className="py-3 px-2 text-center">W</th>
+                        <th className="py-3 px-2 text-center">Diff</th>
+                        <th className="py-3 pl-2 pr-4 text-center">PF</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-sm">
+                      {playoffStandings.map((team, idx) => {
+                        const isTop2 = idx < 2;
+                        return (
+                          <tr
+                            key={team.id}
+                            className={`transition-colors ${
+                              isTop2
+                                ? 'bg-blue-50/60 dark:bg-blue-950/30'
+                                : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
+                            }`}
+                          >
+                            <td className="py-3 pl-4 pr-2 font-mono font-bold">
+                              <span
+                                className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
+                                  isTop2
+                                    ? 'bg-blue-600 text-white shadow-2xs'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                }`}
+                              >
+                                {idx + 1}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 min-w-0 max-w-[160px] sm:max-w-[200px]">
+                              <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0">
+                                <span className="truncate">{team.name}</span>
+                                {isTop2 && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 shrink-0">
+                                    Finalist
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1.5 min-w-0">
+                                <div className="flex items-center gap-1.5 font-medium min-w-0">
+                                  <BadgeA /> <span className="truncate">{team.playerA}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 font-medium min-w-0">
+                                  <BadgeB /> <span className="truncate">{team.playerB}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-2 text-center font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                              {team.wins}
+                            </td>
+                            <td className={`py-3 px-2 text-center font-mono text-xs font-semibold whitespace-nowrap ${
+                              team.diff > 0
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : team.diff < 0
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : 'text-slate-500'
+                            }`}>
+                              {team.diff > 0 ? `+${team.diff}` : team.diff}
+                            </td>
+                            <td className="py-3 pl-2 pr-4 text-center font-mono text-xs text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
+                              {team.pf}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -1251,7 +1560,7 @@ export default function App() {
         )}
 
         {/* ===================================================================== */}
-        {/* STAGE 3: CHAMPIONSHIP                                                 */}
+        {/* STAGE 3: CHAMPIONSHIP SERIES                                          */}
         {/* ===================================================================== */}
         {stage === 'championship' && (
           <div className="space-y-6">
@@ -1259,33 +1568,26 @@ export default function App() {
               <div className="min-w-0">
                 <h2 className="text-xl font-bold tracking-tight flex items-center gap-2.5 min-w-0">
                   <Trophy className="w-6 h-6 text-blue-500 shrink-0" />
-                  <span className="truncate">Stage 3: Championship Final</span>
+                  <span className="truncate">Stage 3: Championship Series ({championshipMatches.length} Games)</span>
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Semis teammates are separated onto opposing teams, with <BadgeA /> and <BadgeB /> roles randomly assigned.
+                  Top 2 playoff teams players have been swapped for the championship matchup series.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
-                  onClick={reshuffleChampionship}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-98 cursor-pointer shadow-2xs"
-                >
-                  <Shuffle className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span>Re-Shuffle Roles</span>
-                </button>
-                <button
-                  onClick={simulateChampionship}
+                  onClick={simulateChampionshipSeries}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition active:scale-98 cursor-pointer"
                 >
                   <Play className="w-4 h-4 shrink-0" />
-                  <span>Simulate Final</span>
+                  <span>Simulate Series</span>
                 </button>
               </div>
             </div>
 
             {/* Celebratory Champions Banner */}
-            {championTeam && (
+            {championshipWinner && (
               <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-700 via-blue-600 to-sky-600 p-6 sm:p-8 text-white shadow-xl">
                 <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
                 <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6 min-w-0">
@@ -1299,123 +1601,95 @@ export default function App() {
                         <span>Tournament Champions</span>
                       </div>
                       <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight truncate">
-                        {championTeam.playerA} & {championTeam.playerB}
+                        {championshipWinner.playerA} & {championshipWinner.playerB}
                       </h3>
                       <p className="text-white/90 text-sm mt-1 font-medium truncate">
-                        {championTeam.name} • Final Score: <span className="font-bold underline decoration-white/40">{championTeam.score}</span>
+                        {championshipWinner.name} • Series Victory: <span className="font-bold underline decoration-white/40">{championshipWinner.wins}</span>
                       </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3.5 bg-black/20 backdrop-blur-md px-5 py-3.5 rounded-2xl border border-white/20 shadow-lg shrink-0">
-                    <div className="text-center px-1">
-                      <div className="text-[10px] uppercase tracking-wider text-white/75 font-semibold">Role A</div>
-                      <div className="font-bold text-sm sm:text-base mt-0.5 truncate max-w-[120px]">{championTeam.playerA}</div>
-                    </div>
-                    <div className="h-8 w-px bg-white/25" />
-                    <div className="text-center px-1">
-                      <div className="text-[10px] uppercase tracking-wider text-white/75 font-semibold">Role B</div>
-                      <div className="font-bold text-sm sm:text-base mt-0.5 truncate max-w-[120px]">{championTeam.playerB}</div>
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Championship Matchup Card */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-6 sm:p-8 shadow-xs">
-              <div className="grid grid-cols-1 md:grid-cols-11 gap-6 items-center min-w-0">
-                {/* Championship Team 1 */}
-                <div className={`md:col-span-5 p-6 rounded-2xl border-2 transition-all min-w-0 ${
-                  parseInt(champMatch.score1, 10) > parseInt(champMatch.score2, 10)
-                    ? 'border-blue-400 bg-blue-50/40 dark:bg-blue-950/20 shadow-sm'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between mb-5 gap-2 min-w-0">
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 truncate">
-                      Championship Team 1
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={champMatch.score1}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setChampMatch(prev => ({ ...prev, score1: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs shrink-0"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs min-w-0">
-                      <span className="font-bold text-sm sm:text-base truncate">{champMatch.team1.playerA}</span>
-                      <BadgeA />
-                    </div>
-                    <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs min-w-0">
-                      <span className="font-bold text-sm sm:text-base truncate">{champMatch.team1.playerB}</span>
-                      <BadgeB />
-                    </div>
-                  </div>
-                </div>
+            {/* Championship Games List */}
+            <div className="space-y-4">
+              {championshipMatches.map((match, mIdx) => {
+                const s1 = parseInt(match.score1, 10);
+                const s2 = parseInt(match.score2, 10);
+                const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
+                const t1Won = hasWinner && s1 > s2;
+                const t2Won = hasWinner && s2 > s1;
 
-                {/* VS Divider */}
-                <div className="md:col-span-1 flex flex-col items-center justify-center">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-extrabold text-xs text-slate-500 shadow-2xs">
-                    VS
-                  </div>
-                </div>
-
-                {/* Championship Team 2 */}
-                <div className={`md:col-span-5 p-6 rounded-2xl border-2 transition-all min-w-0 ${
-                  parseInt(champMatch.score2, 10) > parseInt(champMatch.score1, 10)
-                    ? 'border-blue-400 bg-blue-50/40 dark:bg-blue-950/20 shadow-sm'
-                    : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                }`}>
-                  <div className="flex items-center justify-between mb-5 gap-2 min-w-0">
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 truncate">
-                      Championship Team 2
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={3}
-                      value={champMatch.score2}
-                      onChange={(e) => {
-                        if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                          setChampMatch(prev => ({ ...prev, score2: e.target.value }));
-                          setErrorMsg('');
-                        }
-                      }}
-                      placeholder="0"
-                      className="w-16 h-14 text-center text-xl font-bold rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs shrink-0"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs min-w-0">
-                      <span className="font-bold text-sm sm:text-base truncate">{champMatch.team2.playerA}</span>
-                      <BadgeA />
+                return (
+                  <div key={match.id} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs">
+                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                        Championship Game {match.gameNumber}
+                      </span>
                     </div>
-                    <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs min-w-0">
-                      <span className="font-bold text-sm sm:text-base truncate">{champMatch.team2.playerB}</span>
-                      <BadgeB />
+
+                    <div className="grid grid-cols-1 md:grid-cols-11 gap-4 items-center min-w-0">
+                      {/* Team 1 */}
+                      <div className={`md:col-span-5 p-4 rounded-2xl border transition-all min-w-0 ${
+                        t1Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
+                      }`}>
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <span className="text-xs font-bold text-slate-500 uppercase">Finalist Team 1 (Swapped)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={match.score1}
+                            onChange={(e) => handleChampionshipScoreChange(mIdx, 'score1', e.target.value)}
+                            placeholder="0"
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs"
+                          />
+                        </div>
+                        <div className="space-y-1.5 text-sm font-bold">
+                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
+                            <span className="truncate">{match.team1.playerA}</span> <BadgeA />
+                          </div>
+                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
+                            <span className="truncate">{match.team1.playerB}</span> <BadgeB />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* VS */}
+                      <div className="md:col-span-1 flex justify-center py-2">
+                        <span className="font-extrabold text-xs text-slate-400">VS</span>
+                      </div>
+
+                      {/* Team 2 */}
+                      <div className={`md:col-span-5 p-4 rounded-2xl border transition-all min-w-0 ${
+                        t2Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
+                      }`}>
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <span className="text-xs font-bold text-slate-500 uppercase">Finalist Team 2 (Swapped)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={match.score2}
+                            onChange={(e) => handleChampionshipScoreChange(mIdx, 'score2', e.target.value)}
+                            placeholder="0"
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs"
+                          />
+                        </div>
+                        <div className="space-y-1.5 text-sm font-bold">
+                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
+                            <span className="truncate">{match.team2.playerA}</span> <BadgeA />
+                          </div>
+                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
+                            <span className="truncate">{match.team2.playerB}</span> <BadgeB />
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-
-              {/* Verification Footer */}
-              <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                <div className="flex items-center gap-2 min-w-0">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                  <span className="truncate">
-                    Rule Verified: Semi-Final winners successfully cross-paired and separated onto opposite teams.
-                  </span>
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
         )}

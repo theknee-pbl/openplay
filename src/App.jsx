@@ -903,7 +903,7 @@ export default function App() {
               <Trophy className="w-5 h-5" />
             </div>
             <h1 className="text-base sm:text-lg font-bold tracking-tight truncate">
-              8-Team Playoff & Semis Manager
+              The Great Divide Open Play
             </h1>
           </div>
 

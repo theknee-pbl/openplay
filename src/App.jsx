@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Plus,
   Minus,
-  ArrowLeftRight
+  ArrowLeftRight,
+  ShieldCheck
 } from 'lucide-react';
 
 const SAMPLE_NAMES = [
@@ -28,6 +29,16 @@ const SAMPLE_NAMES = [
   "Logan Reed", "Morgan Fox", "Jesse James", "Sammy Davis",
   "Pat Smith", "Chris Taylor", "Terry Johnson", "Robin Hood"
 ];
+
+/**
+ * Generates a normalized, case-insensitive key for a pair of players
+ * so we can reliably detect if two players were already partners in an earlier stage.
+ */
+const getPairKey = (player1, player2) => {
+  return [String(player1).trim().toLowerCase(), String(player2).trim().toLowerCase()]
+    .sort()
+    .join('::');
+};
 
 export default function App() {
   const [stage, setStage] = useState('setup'); // 'setup' | 'qualifying' | 'playoffs' | 'championship'
@@ -111,43 +122,221 @@ export default function App() {
     return [String(s1), String(s2)];
   };
 
-  const swapAdjacentRankPartners = (rankedList, idPrefix = 'PT') => {
-    // Adjacent rank pairs: (0,1), (2,3), (4,5), (6,7)...
-    // Swap partner B between adjacent teams so rank order is preserved while partners swap
+  /**
+   * Builds a cumulative Set of normalized pair keys from all historical stages
+   * (Qualifying teams, 8-Team Playoff teams, and Semifinal teams).
+   */
+  const buildPastPartnershipsSet = ({
+    includeQualifying = true,
+    includePlayoffs = false,
+    includeSemis = false
+  } = {}) => {
+    const history = new Set();
+
+    if (includeQualifying) {
+      teams.forEach(t => {
+        if (t?.playerA && t?.playerB) {
+          history.add(getPairKey(t.playerA, t.playerB));
+        }
+      });
+    }
+
+    if (includePlayoffs) {
+      playoffTeams.forEach(t => {
+        if (t?.playerA && t?.playerB) {
+          history.add(getPairKey(t.playerA, t.playerB));
+        }
+      });
+    }
+
+    if (includeSemis) {
+      semiMatches.forEach(sm => {
+        if (sm?.team1?.playerA && sm?.team1?.playerB) {
+          history.add(getPairKey(sm.team1.playerA, sm.team1.playerB));
+        }
+        if (sm?.team2?.playerA && sm?.team2?.playerB) {
+          history.add(getPairKey(sm.team2.playerA, sm.team2.playerB));
+        }
+      });
+    }
+
+    return history;
+  };
+
+  /**
+   * Resolves a single adjacent pair (t1, t2) while avoiding any partnership already in `pastPartnershipsSet`.
+   * 1. Checks standard cross-swap: (t1.A + t2.B) and (t2.A + t1.B)
+   * 2. If either is a repeat partnership, checks alternative cross-swap: (t1.A + t2.A) and (t1.B + t2.B)
+   * 3. Returns the chosen pairings alongside metadata indicating if an alternate swap was used.
+   */
+  const resolveAdjacentPair = (t1, t2, pastPartnershipsSet) => {
+    // Option 1: Standard A<->B cross-swap
+    const stdP1 = [t1.playerA, t2.playerB];
+    const stdP2 = [t2.playerA, t1.playerB];
+    const stdHasRepeat =
+      pastPartnershipsSet.has(getPairKey(stdP1[0], stdP1[1])) ||
+      pastPartnershipsSet.has(getPairKey(stdP2[0], stdP2[1]));
+
+    if (!stdHasRepeat) {
+      return {
+        pair1: stdP1,
+        pair2: stdP2,
+        isAlternateSwap: false,
+        swapNote: null,
+        repeatCount: 0
+      };
+    }
+
+    // Option 2: Alternative A<->A and B<->B cross-swap
+    const altP1 = [t1.playerA, t2.playerA];
+    const altP2 = [t1.playerB, t2.playerB];
+    const altRepeatCount =
+      (pastPartnershipsSet.has(getPairKey(altP1[0], altP1[1])) ? 1 : 0) +
+      (pastPartnershipsSet.has(getPairKey(altP2[0], altP2[1])) ? 1 : 0);
+
+    if (altRepeatCount === 0) {
+      return {
+        pair1: altP1,
+        pair2: altP2,
+        isAlternateSwap: true,
+        swapNote: 'Alt Swap (A↔A / B↔B) • Repeat Avoided',
+        repeatCount: 0
+      };
+    }
+
+    // Fallback: pick whichever option yields fewer repeat partnerships
+    const stdRepeatCount =
+      (pastPartnershipsSet.has(getPairKey(stdP1[0], stdP1[1])) ? 1 : 0) +
+      (pastPartnershipsSet.has(getPairKey(stdP2[0], stdP2[1])) ? 1 : 0);
+
+    if (altRepeatCount < stdRepeatCount) {
+      return {
+        pair1: altP1,
+        pair2: altP2,
+        isAlternateSwap: true,
+        swapNote: 'Alt Swap (A↔A / B↔B) • Min Repeats',
+        repeatCount: altRepeatCount
+      };
+    }
+
+    return {
+      pair1: stdP1,
+      pair2: stdP2,
+      isAlternateSwap: false,
+      swapNote: null,
+      repeatCount: stdRepeatCount
+    };
+  };
+
+  /**
+   * Swaps partners for adjacent ranked teams while checking `pastPartnershipsSet`
+   * so players who have already been partners are paired using alternative combinations.
+   * Also checks 4-team adjacent block rotations if a direct 2-team swap still contains a repeat.
+   */
+  const swapAdjacentRankPartners = (rankedList, idPrefix = 'PT', pastPartnershipsSet = new Set()) => {
     const swapped = [];
-    for (let i = 0; i < rankedList.length; i += 2) {
+    let i = 0;
+
+    while (i < rankedList.length) {
       const t1 = rankedList[i];
       const t2 = rankedList[i + 1];
-      const rank1 = i + 1;
-      const rank2 = i + 2;
 
       if (t1 && t2) {
+        const directResult = resolveAdjacentPair(t1, t2, pastPartnershipsSet);
+
+        // If direct adjacent pair (i, i+1) still has a repeat AND a second adjacent pair (i+2, i+3) exists,
+        // evaluate 4-team adjacent block combinations to eliminate all repeat partnerships.
+        const t3 = rankedList[i + 2];
+        const t4 = rankedList[i + 3];
+        if (directResult.repeatCount > 0 && t3 && t4) {
+          const blockTeams = [t1, t2, t3, t4];
+          const players = blockTeams.flatMap((t, idx) => [
+            { name: t.playerA, teamIdx: idx },
+            { name: t.playerB, teamIdx: idx }
+          ]);
+
+          // Candidate 4-team block pairings where no player stays with their current teammate
+          // and adjacent proximity is preserved (e.g., (0,2)+(1,3) or cross-block (0-3) rotations)
+          const blockPatterns = [
+            // Cross-block adjacent rotation: (t1↔t3) and (t2↔t4)
+            [[0, 4], [1, 5], [2, 6], [3, 7]],
+            [[0, 5], [1, 4], [2, 7], [3, 6]],
+            // Outer-inner adjacent block rotation: (t1↔t4) and (t2↔t3)
+            [[0, 6], [1, 7], [2, 4], [3, 5]],
+            [[0, 7], [1, 6], [2, 5], [3, 4]]
+          ];
+
+          let bestBlockChoice = null;
+          for (const pattern of blockPatterns) {
+            const hasRepeat = pattern.some(([pIdxA, pIdxB]) =>
+              pastPartnershipsSet.has(getPairKey(players[pIdxA].name, players[pIdxB].name))
+            );
+            if (!hasRepeat) {
+              bestBlockChoice = pattern.map(([pIdxA, pIdxB]) => [
+                players[pIdxA].name,
+                players[pIdxB].name
+              ]);
+              break;
+            }
+          }
+
+          if (bestBlockChoice) {
+            bestBlockChoice.forEach((pair, offset) => {
+              const rankNum = i + offset + 1;
+              swapped.push({
+                id: `${idPrefix}-${rankNum}`,
+                seedRank: rankNum,
+                name: `Seed #${rankNum}`,
+                playerA: pair[0],
+                playerB: pair[1],
+                isAlternateSwap: true,
+                swapNote: 'Adjacent Block Swap • Repeat Avoided'
+              });
+            });
+            i += 4;
+            continue;
+          }
+        }
+
+        const rank1 = i + 1;
+        const rank2 = i + 2;
+
         swapped.push({
           id: `${idPrefix}-${rank1}`,
           seedRank: rank1,
           name: `Seed #${rank1}`,
-          playerA: t1.playerA,
-          playerB: t2.playerB,
+          playerA: directResult.pair1[0],
+          playerB: directResult.pair1[1],
+          isAlternateSwap: directResult.isAlternateSwap,
+          swapNote: directResult.swapNote,
           swappedFrom: `${t1.playerA} & ${t1.playerB} ↔ ${t2.playerA} & ${t2.playerB}`
         });
         swapped.push({
           id: `${idPrefix}-${rank2}`,
           seedRank: rank2,
           name: `Seed #${rank2}`,
-          playerA: t2.playerA,
-          playerB: t1.playerB,
+          playerA: directResult.pair2[0],
+          playerB: directResult.pair2[1],
+          isAlternateSwap: directResult.isAlternateSwap,
+          swapNote: directResult.swapNote,
           swappedFrom: `${t1.playerA} & ${t1.playerB} ↔ ${t2.playerA} & ${t2.playerB}`
         });
+        i += 2;
       } else if (t1) {
+        const rank1 = i + 1;
         swapped.push({
           id: `${idPrefix}-${rank1}`,
           seedRank: rank1,
           name: `Seed #${rank1}`,
           playerA: t1.playerA,
-          playerB: t1.playerB
+          playerB: t1.playerB,
+          isAlternateSwap: false,
+          swapNote: null
         });
+        i += 1;
       }
     }
+
     return swapped;
   };
 
@@ -374,14 +563,13 @@ export default function App() {
     }
 
     const top8 = ladderStandings.slice(0, 8);
-    // Swap partner of adjacent rank: 1<->2, 3<->4, 5<->6, 7<->8
-    const swapped8 = swapAdjacentRankPartners(top8, 'PO');
+    // Track all Qualifying partnerships so adjacent swaps avoid repeating any qualifying duo
+    const qualifyingHistory = buildPastPartnershipsSet({ includeQualifying: true });
+
+    // Swap partner of adjacent rank: 1<->2, 3<->4, 5<->6, 7<->8 (checking alternate combinations if needed)
+    const swapped8 = swapAdjacentRankPartners(top8, 'PO', qualifyingHistory);
 
     // Bracket pairings (0-indexed in swapped8: 0=Rank1, 1=Rank2, 2=Rank3, 3=Rank4, 4=Rank5, 5=Rank6, 6=Rank7, 7=Rank8)
-    // Match 1: top rank (1) vs low rank (8)
-    // Match 2: top-middle rank (4) vs low-middle rank (5)
-    // Match 3: top rank (2) vs low rank (7)
-    // Match 4: top-middle rank (3) vs low-middle rank (6)
     const initialPlayoffMatches = [
       { id: 'PM-1', label: 'Match 1: Rank 1 vs Rank 8', team1Id: swapped8[0].id, team2Id: swapped8[7].id, score1: '', score2: '' },
       { id: 'PM-2', label: 'Match 2: Rank 4 vs Rank 5', team1Id: swapped8[3].id, team2Id: swapped8[4].id, score1: '', score2: '' },
@@ -485,12 +673,16 @@ export default function App() {
       return;
     }
 
-    // Swap partner of adjacent rank among the 4 ranked winners: Rank 1 <-> Rank 2, Rank 3 <-> Rank 4
-    const swappedSemis = swapAdjacentRankPartners(rankedPlayoffWinners, 'SF');
-    // swappedSemis[0] = Semi Rank 1, swappedSemis[1] = Semi Rank 2, swappedSemis[2] = Semi Rank 3, swappedSemis[3] = Semi Rank 4
+    // Track all Qualifying AND 8-Team Playoff partnerships before swapping semifinalists
+    const historyUpToPlayoffs = buildPastPartnershipsSet({
+      includeQualifying: true,
+      includePlayoffs: true
+    });
 
-    // Match 1: top rank (1) vs bottom rank (4)
-    // Match 2: top rank (2) vs bottom rank (3) (or second pairing)
+    // Swap partner of adjacent rank among the 4 ranked winners: Rank 1 <-> Rank 2, Rank 3 <-> Rank 4
+    // Automatically checks alternative cross-swaps or 4-team block swaps if players were already partners
+    const swappedSemis = swapAdjacentRankPartners(rankedPlayoffWinners, 'SF', historyUpToPlayoffs);
+
     const builtSemis = [
       {
         id: 'SM-1',
@@ -564,18 +756,30 @@ export default function App() {
     const w1 = semifinalWinners[0];
     const w2 = semifinalWinners[1];
 
-    // Swap partners between the 2 semifinal winners
+    // Check full partnership history across Qualifying, Playoffs, and Semifinals
+    const fullTournamentHistory = buildPastPartnershipsSet({
+      includeQualifying: true,
+      includePlayoffs: true,
+      includeSemis: true
+    });
+
+    const resolvedFinalPair = resolveAdjacentPair(w1, w2, fullTournamentHistory);
+
     const finalTeam1 = {
       id: 'CH-1',
-      name: 'Championship Team 1 (Swapped)',
-      playerA: w1.playerA,
-      playerB: w2.playerB
+      name: 'Championship Team 1',
+      playerA: resolvedFinalPair.pair1[0],
+      playerB: resolvedFinalPair.pair1[1],
+      isAlternateSwap: resolvedFinalPair.isAlternateSwap,
+      swapNote: resolvedFinalPair.swapNote
     };
     const finalTeam2 = {
       id: 'CH-2',
-      name: 'Championship Team 2 (Swapped)',
-      playerA: w2.playerA,
-      playerB: w1.playerB
+      name: 'Championship Team 2',
+      playerA: resolvedFinalPair.pair2[0],
+      playerB: resolvedFinalPair.pair2[1],
+      isAlternateSwap: resolvedFinalPair.isAlternateSwap,
+      swapNote: resolvedFinalPair.swapNote
     };
 
     const games = [];
@@ -673,6 +877,19 @@ export default function App() {
       B
     </span>
   );
+
+  const AltSwapBadge = ({ note }) => {
+    if (!note) return null;
+    return (
+      <span
+        title="Alternative adjacent swap combination used to avoid repeating an earlier partnership"
+        className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100/90 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800/80"
+      >
+        <ShieldCheck className="w-3 h-3 shrink-0" />
+        <span>{note}</span>
+      </span>
+    );
+  };
 
   const numTeams = totalPlayers / 2;
 
@@ -780,7 +997,7 @@ export default function App() {
                   Playoff Bracket Format
                 </label>
                 <div className="py-2.5 px-4 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 text-xs sm:text-sm font-semibold text-blue-800 dark:text-blue-200">
-                  8 Teams • Adjacent Partner Swap • Point-Diff Ranking ➔ Semis
+                  8 Teams • Smart Adjacent Partner Swap (No Repeats) ➔ Semis
                 </div>
               </div>
 
@@ -1098,7 +1315,7 @@ export default function App() {
                   <span>Stage 2A: 8-Team Playoffs (Adjacent Partner Swap)</span>
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Partners swapped between adjacent ranks (1↔2, 3↔4, 5↔6, 7↔8). Winners are ranked by point differential.
+                  Partners swapped between adjacent ranks (1↔2, 3↔4, 5↔6, 7↔8), checking alternative combinations if players were already partners.
                 </p>
               </div>
 
@@ -1133,8 +1350,11 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {playoffTeams.map((t) => (
                   <div key={t.id} className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30">
-                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5">
-                      {t.name}
+                    <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                      <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400">
+                        {t.name}
+                      </span>
+                      <AltSwapBadge note={t.swapNote} />
                     </div>
                     <div className="flex items-center gap-1.5 text-xs font-semibold">
                       <BadgeA /> <span className="truncate">{t.playerA}</span>
@@ -1168,6 +1388,11 @@ export default function App() {
                       <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div className={`flex-1 w-full sm:w-auto text-left sm:text-right ${t1Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
                           <div className="text-sm font-bold">{t1.name} {t1Won && '• Winner'}</div>
+                          {t1.swapNote && (
+                            <div className="mt-1 flex sm:justify-end">
+                              <AltSwapBadge note={t1.swapNote} />
+                            </div>
+                          )}
                           <div className="text-xs mt-1 space-y-1">
                             <div className="flex items-center sm:justify-end gap-1.5"><span>{t1.playerA}</span> <BadgeA /></div>
                             <div className="flex items-center sm:justify-end gap-1.5"><span>{t1.playerB}</span> <BadgeB /></div>
@@ -1198,6 +1423,11 @@ export default function App() {
 
                         <div className={`flex-1 w-full sm:w-auto text-left ${t2Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
                           <div className="text-sm font-bold">{t2.name} {t2Won && '• Winner'}</div>
+                          {t2.swapNote && (
+                            <div className="mt-1">
+                              <AltSwapBadge note={t2.swapNote} />
+                            </div>
+                          )}
                           <div className="text-xs mt-1 space-y-1">
                             <div className="flex items-center gap-1.5"><BadgeA /> <span>{t2.playerA}</span></div>
                             <div className="flex items-center gap-1.5"><BadgeB /> <span>{t2.playerB}</span></div>
@@ -1213,7 +1443,7 @@ export default function App() {
               <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-xs">
                 <h3 className="font-bold text-base mb-1">Playoff Winners Ranked by Point Diff</h3>
                 <p className="text-xs text-slate-500 mb-4">
-                  Top 4 playoff winners are ranked by point differential before adjacent-rank swapping for Semis.
+                  Top 4 playoff winners are ranked by point differential before repeat-checked adjacent swapping for Semis.
                 </p>
 
                 {rankedPlayoffWinners.length < 4 ? (
@@ -1259,10 +1489,10 @@ export default function App() {
                   <div>
                     <h3 className="text-lg font-bold flex items-center gap-2">
                       <Swords className="w-5 h-5 text-blue-600" />
-                      <span>Stage 2B: Semifinals (Swapped Adjacent Winners)</span>
+                      <span>Stage 2B: Semifinals (Repeat-Checked Adjacent Winners)</span>
                     </h3>
                     <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                      Adjacent winner partners swapped (1↔2, 3↔4). Match 1: Top vs Bottom; Match 2: #2 vs #3.
+                      Adjacent winner partners swapped (1↔2, 3↔4) with automatic alternate swap fallback to prevent repeat partnerships.
                     </p>
                   </div>
 
@@ -1305,6 +1535,11 @@ export default function App() {
                         <div className="flex items-center justify-between gap-3">
                           <div className={`flex-1 min-w-0 ${t1Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
                             <div className="text-sm font-bold truncate">{sm.team1.name} {t1Won && '• Finalist'}</div>
+                            {sm.team1.swapNote && (
+                              <div className="mt-1">
+                                <AltSwapBadge note={sm.team1.swapNote} />
+                              </div>
+                            )}
                             <div className="mt-1 space-y-1 text-xs">
                               <div className="flex items-center gap-1.5">
                                 <BadgeA /> <span className="truncate">{sm.team1.playerA}</span>
@@ -1337,6 +1572,11 @@ export default function App() {
                           </div>
                           <div className={`flex-1 text-right min-w-0 ${t2Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
                             <div className="text-sm font-bold truncate">{sm.team2.name} {t2Won && '• Finalist'}</div>
+                            {sm.team2.swapNote && (
+                              <div className="mt-1 flex justify-end">
+                                <AltSwapBadge note={sm.team2.swapNote} />
+                              </div>
+                            )}
                             <div className="mt-1 space-y-1 text-xs">
                               <div className="flex items-center justify-end gap-1.5">
                                 <span className="truncate">{sm.team2.playerA}</span> <BadgeA />
@@ -1368,7 +1608,7 @@ export default function App() {
                   <span>Stage 3: Championship — Best of {bestOfCount}</span>
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Semifinal winners swapped partners. First to {championshipSummary?.winsNeeded} game win(s) takes the title.
+                  Semifinal winners swapped partners with repeat-partnership prevention. First to {championshipSummary?.winsNeeded} game win(s) takes the title.
                 </p>
               </div>
 
@@ -1442,8 +1682,11 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-11 gap-4 items-center">
                       <div className={`md:col-span-5 p-4 rounded-2xl border ${t1Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team1.name}</span>
+                        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team1.name}</span>
+                            <AltSwapBadge note={championshipTeams.team1.swapNote} />
+                          </div>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -1463,8 +1706,11 @@ export default function App() {
                       <div className="md:col-span-1 text-center font-extrabold text-xs text-slate-400">VS</div>
 
                       <div className={`md:col-span-5 p-4 rounded-2xl border ${t2Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team2.name}</span>
+                        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team2.name}</span>
+                            <AltSwapBadge note={championshipTeams.team2.swapNote} />
+                          </div>
                           <input
                             type="text"
                             inputMode="numeric"

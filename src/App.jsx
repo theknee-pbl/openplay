@@ -14,10 +14,10 @@ import {
   UserPlus,
   AlertCircle,
   Plus,
-  Minus
+  Minus,
+  ArrowLeftRight
 } from 'lucide-react';
 
-// Sample names for quick auto-fill
 const SAMPLE_NAMES = [
   "Alex Rivera", "Jordan Lee", "Taylor Kim", "Morgan Vance",
   "Casey Chen", "Riley Brooks", "Jamie Patel", "Quinn Murphy",
@@ -30,46 +30,41 @@ const SAMPLE_NAMES = [
 ];
 
 export default function App() {
-  // Navigation & Stage State: 'setup' | 'qualifying' | 'playoffs' | 'championship'
-  const [stage, setStage] = useState('setup');
+  const [stage, setStage] = useState('setup'); // 'setup' | 'qualifying' | 'playoffs' | 'championship'
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Setup configuration state:
+  // Setup configuration state
   const [totalPlayers, setTotalPlayers] = useState(24);
   const [matchesPerTeam, setMatchesPerTeam] = useState(5);
-  const [playoffTeamCount, setPlayoffTeamCount] = useState(4); // Requirement 1: Configurable even number of playoff teams
+  const [bestOfCount, setBestOfCount] = useState(3); // Best of 1, 3, 5, 7
 
   // Player Inputs array
   const [playerInputs, setPlayerInputs] = useState(Array(24).fill(''));
 
-  // Stage 1: Teams & Qualifying Schedule
+  // Stage 1: Qualifying Teams & Schedule
   const [teams, setTeams] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [activeRoundTab, setActiveRoundTab] = useState(1);
 
-  // Stage 2: Playoffs State
-  const [playoffRoundsCount, setPlayoffRoundsCount] = useState(1); // Requirement 3: How many rounds/games for playoff teams
-  const [qualifiedPlayoffTeams, setQualifiedPlayoffTeams] = useState([]);
-  // playoffRounds: array of round objects containing matches
-  const [playoffRounds, setPlayoffRounds] = useState([]);
-  const [activePlayoffRoundTab, setActivePlayoffRoundTab] = useState(1);
+  // Stage 2: 8-Team Playoffs & Semis State
+  const [playoffTeams, setPlayoffTeams] = useState([]); // 8 teams after adjacent rank partner swap (ranks 1..8)
+  const [playoffMatches, setPlayoffMatches] = useState([]); // 4 matches: [M1(1v8), M2(4v5), M3(2v7), M4(3v6)]
+  const [semiMatches, setSemiMatches] = useState([]); // 2 matches: [S1(1v4), S2(2v3)] after swapping winners of adjacent rank
 
   // Stage 3: Championship State
-  const [championshipGamesCount, setChampionshipGamesCount] = useState(1); // Requirement 6: Select how many games in championship
-  const [championshipFinalists, setChampionshipFinalists] = useState([]); // Requirement 4: Top 2 players/teams
+  const [championshipTeams, setChampionshipTeams] = useState(null); // { team1, team2 } after swapping semi winners
   const [championshipMatches, setChampionshipMatches] = useState([]);
 
-  // --- HANDLER: Changing Total Players Count ---
+  // --- HANDLERS: Player & Series Configuration ---
   const handlePlayerCountChange = (newCount) => {
-    if (newCount < 4 || newCount > 32 || newCount % 2 !== 0) return;
+    if (newCount < 16 || newCount > 32 || newCount % 2 !== 0) return;
     setTotalPlayers(newCount);
-    
+
     setPlayerInputs(prev => {
       if (newCount > prev.length) {
         return [...prev, ...Array(newCount - prev.length).fill('')];
-      } else {
-        return prev.slice(0, newCount);
       }
+      return prev.slice(0, newCount);
     });
 
     const newNumTeams = newCount / 2;
@@ -77,50 +72,6 @@ export default function App() {
     if (matchesPerTeam > maxAllowed) {
       setMatchesPerTeam(Math.max(1, maxAllowed));
     }
-    // Ensure playoff team count doesn't exceed total teams and is even
-    if (playoffTeamCount > newNumTeams) {
-      const adjusted = newNumTeams % 2 === 0 ? newNumTeams : Math.max(2, newNumTeams - 1);
-      setPlayoffTeamCount(adjusted);
-    }
-    setErrorMsg('');
-  };
-
-  const handlePlayoffTeamCountChange = (newCount) => {
-    const maxTeams = totalPlayers / 2;
-    if (newCount < 2 || newCount > maxTeams || newCount % 2 !== 0) return;
-    setPlayoffTeamCount(newCount);
-    setErrorMsg('');
-  };
-
-  // --- HELPER: Fisher-Yates Shuffle ---
-  const shuffleArray = (arr) => {
-    const copy = [...arr];
-    for (let i = copy.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-  };
-
-  // --- HELPER: Random Non-Tied Score Generator ---
-  const generateRandomScores = (min = 11, max = 21) => {
-    const s1 = Math.floor(Math.random() * (max - min + 1)) + min;
-    let s2 = Math.floor(Math.random() * (max - min + 1)) + min;
-    while (s2 === s1) {
-      s2 = Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-    return [String(s1), String(s2)];
-  };
-
-  // --- SETUP ACTIONS ---
-  const handleAutoFill = () => {
-    const filled = Array(totalPlayers).fill('').map((_, i) => SAMPLE_NAMES[i % SAMPLE_NAMES.length]);
-    setPlayerInputs(filled);
-    setErrorMsg('');
-  };
-
-  const handleClearInputs = () => {
-    setPlayerInputs(Array(totalPlayers).fill(''));
     setErrorMsg('');
   };
 
@@ -131,27 +82,96 @@ export default function App() {
     if (errorMsg) setErrorMsg('');
   };
 
+  const handleAutoFill = () => {
+    setPlayerInputs(Array(totalPlayers).fill('').map((_, i) => SAMPLE_NAMES[i % SAMPLE_NAMES.length]));
+    setErrorMsg('');
+  };
+
+  const handleClearInputs = () => {
+    setPlayerInputs(Array(totalPlayers).fill(''));
+    setErrorMsg('');
+  };
+
+  // --- HELPERS ---
+  const shuffleArray = (arr) => {
+    const copy = [...arr];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  const generateRandomScores = (min = 11, max = 21) => {
+    const s1 = Math.floor(Math.random() * (max - min + 1)) + min;
+    let s2 = Math.floor(Math.random() * (max - min + 1)) + min;
+    while (s2 === s1) {
+      s2 = Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    return [String(s1), String(s2)];
+  };
+
+  const swapAdjacentRankPartners = (rankedList, idPrefix = 'PT') => {
+    // Adjacent rank pairs: (0,1), (2,3), (4,5), (6,7)...
+    // Swap partner B between adjacent teams so rank order is preserved while partners swap
+    const swapped = [];
+    for (let i = 0; i < rankedList.length; i += 2) {
+      const t1 = rankedList[i];
+      const t2 = rankedList[i + 1];
+      const rank1 = i + 1;
+      const rank2 = i + 2;
+
+      if (t1 && t2) {
+        swapped.push({
+          id: `${idPrefix}-${rank1}`,
+          seedRank: rank1,
+          name: `Seed #${rank1}`,
+          playerA: t1.playerA,
+          playerB: t2.playerB,
+          swappedFrom: `${t1.playerA} & ${t1.playerB} ↔ ${t2.playerA} & ${t2.playerB}`
+        });
+        swapped.push({
+          id: `${idPrefix}-${rank2}`,
+          seedRank: rank2,
+          name: `Seed #${rank2}`,
+          playerA: t2.playerA,
+          playerB: t1.playerB,
+          swappedFrom: `${t1.playerA} & ${t1.playerB} ↔ ${t2.playerA} & ${t2.playerB}`
+        });
+      } else if (t1) {
+        swapped.push({
+          id: `${idPrefix}-${rank1}`,
+          seedRank: rank1,
+          name: `Seed #${rank1}`,
+          playerA: t1.playerA,
+          playerB: t1.playerB
+        });
+      }
+    }
+    return swapped;
+  };
+
+  // --- START QUALIFYING ---
   const startTournament = () => {
     const cleaned = playerInputs.map((p, idx) => p.trim() || `Player ${String(idx + 1).padStart(2, '0')}`);
     const uniqueCheck = new Set(cleaned.map(n => n.toLowerCase()));
     if (uniqueCheck.size !== totalPlayers) {
-      setErrorMsg(`Please ensure all ${totalPlayers} player names are unique so teammates can be tracked accurately.`);
+      setErrorMsg(`Please ensure all ${totalPlayers} player names are unique.`);
       return;
     }
 
     const numTeams = totalPlayers / 2;
+    if (numTeams < 8) {
+      setErrorMsg('At least 16 players (8 teams) are required for an 8-team playoff bracket.');
+      return;
+    }
+
     const maxMatches = numTeams - 1;
     if (matchesPerTeam < 1 || matchesPerTeam > maxMatches) {
       setErrorMsg(`Matches per team must be between 1 and ${maxMatches} for ${numTeams} teams.`);
       return;
     }
 
-    if (playoffTeamCount > numTeams || playoffTeamCount % 2 !== 0) {
-      setErrorMsg(`Playoff team count must be an even number between 2 and ${numTeams}.`);
-      return;
-    }
-
-    // 1. Randomize players into teams
     const shuffled = shuffleArray(cleaned);
     const createdTeams = [];
     for (let i = 0; i < totalPlayers; i += 2) {
@@ -164,7 +184,6 @@ export default function App() {
       });
     }
 
-    // 2. Randomized Scheduling with No-Repeat Opponent Constraints
     const generatedRounds = [];
     const oppositionHistory = {};
     createdTeams.forEach(t => { oppositionHistory[t.id] = new Set(); });
@@ -173,13 +192,12 @@ export default function App() {
 
     for (let r = 1; r <= matchesPerTeam; r++) {
       const matches = [];
-      let availableTeams = shuffleArray([...createdTeams]);
       let roundValid = false;
       let attempts = 0;
 
-      while (!roundValid && attempts < 100) {
+      while (!roundValid && attempts < 120) {
         attempts++;
-        availableTeams = shuffleArray([...createdTeams]);
+        const availableTeams = shuffleArray([...createdTeams]);
         const currentRoundPairs = [];
         const matchedInThisRound = new Set();
         let failed = false;
@@ -198,7 +216,6 @@ export default function App() {
           }
 
           const t2 = eligibleOpponents[Math.floor(Math.random() * eligibleOpponents.length)];
-          
           matchedInThisRound.add(t1.id);
           matchedInThisRound.add(t2.id);
           currentRoundPairs.push({ t1, t2 });
@@ -207,15 +224,13 @@ export default function App() {
         if (!failed && currentRoundPairs.length === numTeams / 2) {
           roundValid = true;
           currentRoundPairs.forEach((pair, idx) => {
-            const { t1, t2 } = pair;
-            oppositionHistory[t1.id].add(t2.id);
-            oppositionHistory[t2.id].add(t1.id);
-
+            oppositionHistory[pair.t1.id].add(pair.t2.id);
+            oppositionHistory[pair.t2.id].add(pair.t1.id);
             matches.push({
               id: `R${r}-M${idx + 1}`,
               round: r,
-              team1Id: t1.id,
-              team2Id: t2.id,
+              team1Id: pair.t1.id,
+              team2Id: pair.t2.id,
               score1: '',
               score2: ''
             });
@@ -231,21 +246,20 @@ export default function App() {
     }
 
     if (scheduleFailed) {
-      setErrorMsg('Could not generate a non-repeating schedule for this configuration. Try re-randomizing or adjusting match count.');
+      setErrorMsg('Could not generate a non-repeating schedule. Try re-randomizing.');
       return;
     }
 
     setTeams(createdTeams);
     setRounds(generatedRounds);
     setActiveRoundTab(1);
-    setQualifiedPlayoffTeams([]);
-    setPlayoffRounds([]);
+    setPlayoffTeams([]);
+    setPlayoffMatches([]);
+    setSemiMatches([]);
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
     setErrorMsg('');
     setStage('qualifying');
-  };
-
-  const rerandomizeTeamsAndSchedule = () => {
-    startTournament();
   };
 
   const teamMap = useMemo(() => {
@@ -258,39 +272,29 @@ export default function App() {
     if (teams.length === 0) return [];
     const stats = {};
     teams.forEach(t => {
-      stats[t.id] = {
-        ...t,
-        played: 0,
-        wins: 0,
-        losses: 0,
-        pf: 0,
-        pa: 0,
-        diff: 0
-      };
+      stats[t.id] = { ...t, played: 0, wins: 0, losses: 0, pf: 0, pa: 0, diff: 0 };
     });
 
     rounds.forEach(roundMatches => {
       roundMatches.forEach(m => {
-        if (m.score1 !== '' && m.score2 !== '') {
-          const s1 = parseInt(m.score1, 10);
-          const s2 = parseInt(m.score2, 10);
-          if (!isNaN(s1) && !isNaN(s2) && s1 !== s2) {
-            const st1 = stats[m.team1Id];
-            const st2 = stats[m.team2Id];
-            if (st1 && st2) {
-              st1.played += 1;
-              st2.played += 1;
-              st1.pf += s1;
-              st1.pa += s2;
-              st2.pf += s2;
-              st2.pa += s1;
-              if (s1 > s2) {
-                st1.wins += 1;
-                st2.losses += 1;
-              } else {
-                st2.wins += 1;
-                st1.losses += 1;
-              }
+        const s1 = parseInt(m.score1, 10);
+        const s2 = parseInt(m.score2, 10);
+        if (m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2) {
+          const st1 = stats[m.team1Id];
+          const st2 = stats[m.team2Id];
+          if (st1 && st2) {
+            st1.played += 1;
+            st2.played += 1;
+            st1.pf += s1;
+            st1.pa += s2;
+            st2.pf += s2;
+            st2.pa += s1;
+            if (s1 > s2) {
+              st1.wins += 1;
+              st2.losses += 1;
+            } else {
+              st2.wins += 1;
+              st1.losses += 1;
             }
           }
         }
@@ -306,11 +310,10 @@ export default function App() {
       });
   }, [teams, rounds]);
 
-  const totalQualifyingMatchesCount = useMemo(() => {
-    let count = 0;
-    rounds.forEach(r => count += r.length);
-    return count;
-  }, [rounds]);
+  const totalQualifyingMatchesCount = useMemo(
+    () => rounds.reduce((acc, r) => acc + r.length, 0),
+    [rounds]
+  );
 
   const completedQualifyingMatches = useMemo(() => {
     let count = 0;
@@ -350,451 +353,382 @@ export default function App() {
     setRounds(prev =>
       prev.map(roundMatches =>
         roundMatches.map(m => {
-          if (m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2) {
+          const s1 = parseInt(m.score1, 10);
+          const s2 = parseInt(m.score2, 10);
+          if (m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2) {
             return m;
           }
-          const [s1, s2] = generateRandomScores(10, 21);
-          return { ...m, score1: s1, score2: s2 };
+          const [ns1, ns2] = generateRandomScores(10, 21);
+          return { ...m, score1: ns1, score2: ns2 };
         })
       )
     );
     setErrorMsg('');
   };
 
-  // --- TRANSITION TO PLAYOFFS ---
-  const advanceToPlotform = () => {
+  // --- STAGE 2: 8-TEAM PLAYOFF BRACKET ---
+  const proceedToPlayoffs = () => {
     if (completedQualifyingMatches < totalQualifyingMatchesCount) {
-      setErrorMsg(`Please complete all ${totalQualifyingMatchesCount} qualifying matches first (${completedQualifyingMatches}/${totalQualifyingMatchesCount} completed).`);
+      setErrorMsg(`Complete all ${totalQualifyingMatchesCount} qualifying matches first (${completedQualifyingMatches}/${totalQualifyingMatchesCount}).`);
       return;
     }
 
-    const topTeams = ladderStandings.slice(0, playoffTeamCount);
-    const playoffTeamsConstructed = [];
+    const top8 = ladderStandings.slice(0, 8);
+    // Swap partner of adjacent rank: 1<->2, 3<->4, 5<->6, 7<->8
+    const swapped8 = swapAdjacentRankPartners(top8, 'PO');
 
-    // Adjacent Rank Partner Swap (1<->2, 3<->4, ...) with sequential playoff naming starting at Team 1
-    for (let i = 0; i < topTeams.length; i += 2) {
-      const t1 = topTeams[i];
-      const t2 = topTeams[i + 1];
+    // Bracket pairings (0-indexed in swapped8: 0=Rank1, 1=Rank2, 2=Rank3, 3=Rank4, 4=Rank5, 5=Rank6, 6=Rank7, 7=Rank8)
+    // Match 1: top rank (1) vs low rank (8)
+    // Match 2: top-middle rank (4) vs low-middle rank (5)
+    // Match 3: top rank (2) vs low rank (7)
+    // Match 4: top-middle rank (3) vs low-middle rank (6)
+    const initialPlayoffMatches = [
+      { id: 'PM-1', label: 'Match 1: Rank 1 vs Rank 8', team1Id: swapped8[0].id, team2Id: swapped8[7].id, score1: '', score2: '' },
+      { id: 'PM-2', label: 'Match 2: Rank 4 vs Rank 5', team1Id: swapped8[3].id, team2Id: swapped8[4].id, score1: '', score2: '' },
+      { id: 'PM-3', label: 'Match 3: Rank 2 vs Rank 7', team1Id: swapped8[1].id, team2Id: swapped8[6].id, score1: '', score2: '' },
+      { id: 'PM-4', label: 'Match 4: Rank 3 vs Rank 6', team1Id: swapped8[2].id, team2Id: swapped8[5].id, score1: '', score2: '' }
+    ];
 
-      if (t2) {
-        const team1Num = playoffTeamsConstructed.length + 1;
-        const team2Num = team1Num + 1;
-
-        playoffTeamsConstructed.push(
-          {
-            id: `PT${team1Num}`,
-            name: `Team ${team1Num}`,
-            playerA: t1.playerA,
-            playerB: t2.playerB
-          },
-          {
-            id: `PT${team2Num}`,
-            name: `Team ${team2Num}`,
-            playerA: t2.playerA,
-            playerB: t1.playerB
-          }
-        );
-      } else {
-        const teamNum = playoffTeamsConstructed.length + 1;
-        playoffTeamsConstructed.push({
-          id: `PT${teamNum}`,
-          name: `Team ${teamNum}`,
-          playerA: t1.playerA,
-          playerB: t1.playerB
-        });
-      }
-    }
-
-    setQualifiedPlayoffTeams(playoffTeamsConstructed);
-
-    // Build Playoff Schedule based on playoffRoundsCount rounds (Round-Robin or Bracket style rounds)
-    // Let's create single round-robin rounds among the playoff teams for the specified number of playoff rounds
-    const generatedPlayoffRounds = [];
-    const pOppositionHistory = {};
-    playoffTeamsConstructed.forEach(t => { pOppositionHistory[t.id] = new Set(); });
-
-    let pScheduleFailed = false;
-    const maxPRounds = playoffTeamCount - 1;
-    const actualPRoundsToBuild = Math.min(playoffRoundsCount, maxPRounds);
-
-    for (let r = 1; r <= actualPRoundsToBuild; r++) {
-      const matches = [];
-      let available = shuffleArray([...playoffTeamsConstructed]);
-      let roundValid = false;
-      let attempts = 0;
-
-      while (!roundValid && attempts < 100) {
-        attempts++;
-        available = shuffleArray([...playoffTeamsConstructed]);
-        const currentPairs = [];
-        const matchedThisRound = new Set();
-        let failed = false;
-
-        while (available.length > 0) {
-          const t1 = available.pop();
-          if (matchedThisRound.has(t1.id)) continue;
-
-          const eligible = available.filter(
-            t2 => !matchedThisRound.has(t2.id) && !pOppositionHistory[t1.id].has(t2.id)
-          );
-
-          if (eligible.length === 0) {
-            failed = true;
-            break;
-          }
-
-          const t2 = eligible[Math.floor(Math.random() * eligible.length)];
-          matchedThisRound.add(t1.id);
-          matchedThisRound.add(t2.id);
-          currentPairs.push({ t1, t2 });
-        }
-
-        if (!failed && currentPairs.length === playoffTeamCount / 2) {
-          roundValid = true;
-          currentPairs.forEach((pair, idx) => {
-            const { t1, t2 } = pair;
-            pOppositionHistory[t1.id].add(t2.id);
-            pOppositionHistory[t2.id].add(t1.id);
-
-            matches.push({
-              id: `PR${r}-M${idx + 1}`,
-              round: r,
-              team1Id: t1.id,
-              team2Id: t2.id,
-              score1: '',
-              score2: ''
-            });
-          });
-        }
-      }
-
-      if (!roundValid) {
-        pScheduleFailed = true;
-        break;
-      }
-      generatedPlayoffRounds.push(matches);
-    }
-
-    if (pScheduleFailed && generatedPlayoffRounds.length === 0) {
-      // Fallback simple pairing for 1st playoff round if constraints tight
-      const matches = [];
-      for (let i = 0; i < playoffTeamsConstructed.length; i += 2) {
-        matches.push({
-          id: `PR1-M${i / 2 + 1}`,
-          round: 1,
-          team1Id: playoffTeamsConstructed[i].id,
-          team2Id: playoffTeamsConstructed[i + 1].id,
-          score1: '',
-          score2: ''
-        });
-      }
-      generatedPlayoffRounds.push(matches);
-    }
-
-    setPlayoffRounds(generatedPlayoffRounds);
-    setActivePlayoffRoundTab(1);
+    setPlayoffTeams(swapped8);
+    setPlayoffMatches(initialPlayoffMatches);
+    setSemiMatches([]);
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
     setErrorMsg('');
     setStage('playoffs');
   };
 
   const playoffTeamMap = useMemo(() => {
     const map = {};
-    qualifiedPlayoffTeams.forEach(t => { map[t.id] = t; });
+    playoffTeams.forEach(t => { map[t.id] = t; });
     return map;
-  }, [qualifiedPlayoffTeams]);
+  }, [playoffTeams]);
 
-  const playoffStandings = useMemo(() => {
-    if (qualifiedPlayoffTeams.length === 0) return [];
-    const stats = {};
-    qualifiedPlayoffTeams.forEach(t => {
-      stats[t.id] = {
-        ...t,
-        played: 0,
-        wins: 0,
-        losses: 0,
-        pf: 0,
-        pa: 0,
-        diff: 0
-      };
+  const handlePlayoffScoreChange = (idx, field, val) => {
+    if (val !== '' && !/^\d+$/.test(val)) return;
+    setPlayoffMatches(prev => {
+      const copy = prev.map(m => ({ ...m }));
+      copy[idx][field] = val;
+      return copy;
     });
+    // Reset downstream semis/finals if playoff scores change
+    setSemiMatches([]);
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
+    setErrorMsg('');
+  };
 
-    playoffRounds.forEach(roundMatches => {
-      roundMatches.forEach(m => {
-        if (m.score1 !== '' && m.score2 !== '') {
-          const s1 = parseInt(m.score1, 10);
-          const s2 = parseInt(m.score2, 10);
-          if (!isNaN(s1) && !isNaN(s2) && s1 !== s2) {
-            const st1 = stats[m.team1Id];
-            const st2 = stats[m.team2Id];
-            if (st1 && st2) {
-              st1.played += 1;
-              st2.played += 1;
-              st1.pf += s1;
-              st1.pa += s2;
-              st2.pf += s2;
-              st2.pa += s1;
-              if (s1 > s2) {
-                st1.wins += 1;
-                st2.losses += 1;
-              } else {
-                st2.wins += 1;
-                st1.losses += 1;
-              }
-            }
-          }
-        }
-      });
-    });
+  const simulatePlayoffMatches = () => {
+    setPlayoffMatches(prev =>
+      prev.map(m => {
+        const [s1, s2] = generateRandomScores(11, 21);
+        return { ...m, score1: s1, score2: s2 };
+      })
+    );
+    setSemiMatches([]);
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
+    setErrorMsg('');
+  };
 
-    return Object.values(stats)
-      .map(s => ({ ...s, diff: s.pf - s.pa }))
-      .sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        if (b.diff !== a.diff) return b.diff - a.diff;
-        return b.pf - a.pf;
-      });
-  }, [qualifiedPlayoffTeams, playoffRounds]);
+  // Rank the 4 playoff winners based on point differential
+  const rankedPlayoffWinners = useMemo(() => {
+    if (playoffMatches.length < 4 || playoffTeams.length < 8) return [];
+    const winners = [];
 
-  const totalPlayoffMatchesCount = useMemo(() => {
-    let count = 0;
-    playoffRounds.forEach(r => count += r.length);
-    return count;
-  }, [playoffRounds]);
-
-  const completedPlayoffMatches = useMemo(() => {
-    let count = 0;
-    playoffRounds.forEach(r => r.forEach(m => {
+    for (const m of playoffMatches) {
       const s1 = parseInt(m.score1, 10);
       const s2 = parseInt(m.score2, 10);
-      if (m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2) {
-        count++;
+      if (m.score1 === '' || m.score2 === '' || isNaN(s1) || isNaN(s2) || s1 === s2) {
+        return [];
       }
-    }));
-    return count;
-  }, [playoffRounds]);
+      const t1 = playoffTeamMap[m.team1Id];
+      const t2 = playoffTeamMap[m.team2Id];
+      if (!t1 || !t2) return [];
 
-  const handlePlayoffScoreChange = (roundIdx, matchIdx, field, val) => {
-    if (val !== '' && !/^\d+$/.test(val)) return;
-    setPlayoffRounds(prev => {
-      const copy = prev.map(r => r.map(m => ({ ...m })));
-      copy[roundIdx][matchIdx][field] = val;
-      return copy;
-    });
-    setErrorMsg('');
-  };
+      if (s1 > s2) {
+        winners.push({
+          ...t1,
+          matchId: m.id,
+          pf: s1,
+          pa: s2,
+          pointDiff: s1 - s2
+        });
+      } else {
+        winners.push({
+          ...t2,
+          matchId: m.id,
+          pf: s2,
+          pa: s1,
+          pointDiff: s2 - s1
+        });
+      }
+    }
 
-  const simulateSinglePlayoffRound = (roundIdx) => {
-    setPlayoffRounds(prev => {
-      const copy = prev.map(r => r.map(m => ({ ...m })));
-      copy[roundIdx] = copy[roundIdx].map(m => {
-        const [s1, s2] = generateRandomScores(10, 21);
-        return { ...m, score1: s1, score2: s2 };
-      });
-      return copy;
-    });
-    setErrorMsg('');
-  };
+    return winners
+      .sort((a, b) => {
+        if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
+        if (b.pf !== a.pf) return b.pf - a.pf;
+        return a.seedRank - b.seedRank;
+      })
+      .map((w, idx) => ({
+        ...w,
+        winnerRank: idx + 1,
+        winnerLabel: `Winner Rank #${idx + 1}`
+      }));
+  }, [playoffMatches, playoffTeams, playoffTeamMap]);
 
-  const simulateAllPlayoffs = () => {
-    setPlayoffRounds(prev =>
-      prev.map(roundMatches =>
-        roundMatches.map(m => {
-          if (m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2) {
-            return m;
-          }
-          const [s1, s2] = generateRandomScores(10, 21);
-          return { ...m, score1: s1, score2: s2 };
-        })
-      )
-    );
-    setErrorMsg('');
-  };
-
-  // --- TRANSITION TO CHAMPIONSHIP (Requirements 4 & 5 & 6) ---
-  const advanceToChampionship = () => {
-    if (completedPlayoffMatches < totalPlayoffMatchesCount) {
-      setErrorMsg(`Please complete all playoff matches first (${completedPlayoffMatches}/${totalPlayoffMatchesCount} completed).`);
+  // --- GENERATE SEMIFINALS FROM RANKED PLAYOFF WINNERS ---
+  const generateSemifinals = () => {
+    if (rankedPlayoffWinners.length < 4) {
+      setErrorMsg('Please complete all 4 playoff matches with non-tied scores first.');
       return;
     }
 
-    // Requirement 4: Rank the playoff teams and have the top 2 players/teams proceed to the championship.
-    // If teams are ranked, the top 2 teams or top 2 players overall from the playoff standings proceed.
-    const topPlayoffTeams = playoffStandings.slice(0, 2);
-    setChampionshipFinalists(topPlayoffTeams);
+    // Swap partner of adjacent rank among the 4 ranked winners: Rank 1 <-> Rank 2, Rank 3 <-> Rank 4
+    const swappedSemis = swapAdjacentRankPartners(rankedPlayoffWinners, 'SF');
+    // swappedSemis[0] = Semi Rank 1, swappedSemis[1] = Semi Rank 2, swappedSemis[2] = Semi Rank 3, swappedSemis[3] = Semi Rank 4
 
-    // Requirement 5: Swap players of the 2 championship teams.
-    // Team 1 has (p1A, p1B) and Team 2 has (p2A, p2B). Swap players between them to form new championship matchup!
-    const t1 = topPlayoffTeams[0];
-    const t2 = topPlayoffTeams[1];
+    // Match 1: top rank (1) vs bottom rank (4)
+    // Match 2: top rank (2) vs bottom rank (3) (or second pairing)
+    const builtSemis = [
+      {
+        id: 'SM-1',
+        label: 'Semifinal Match 1: Top Rank (#1) vs Bottom Rank (#4)',
+        team1: swappedSemis[0],
+        team2: swappedSemis[3],
+        score1: '',
+        score2: ''
+      },
+      {
+        id: 'SM-2',
+        label: 'Semifinal Match 2: Rank #2 vs Rank #3',
+        team1: swappedSemis[1],
+        team2: swappedSemis[2],
+        score1: '',
+        score2: ''
+      }
+    ];
 
-    const swappedTeam1Players = [t1.playerA, t2.playerA];
-    const swappedTeam2Players = [t1.playerB, t2.playerB];
+    setSemiMatches(builtSemis);
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
+    setErrorMsg('');
+  };
 
-    // Requirement 6: Select how many games in the championship
-    const gamesCount = Math.max(1, championshipGamesCount);
-    const matches = [];
-    for (let g = 1; g <= gamesCount; g++) {
-      matches.push({
-        id: `Champ-G${g}`,
+  const handleSemiScoreChange = (idx, field, val) => {
+    if (val !== '' && !/^\d+$/.test(val)) return;
+    setSemiMatches(prev => {
+      const copy = prev.map(m => ({ ...m }));
+      copy[idx][field] = val;
+      return copy;
+    });
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
+    setErrorMsg('');
+  };
+
+  const simulateSemifinals = () => {
+    setSemiMatches(prev =>
+      prev.map(m => {
+        const [s1, s2] = generateRandomScores(11, 21);
+        return { ...m, score1: s1, score2: s2 };
+      })
+    );
+    setChampionshipTeams(null);
+    setChampionshipMatches([]);
+    setErrorMsg('');
+  };
+
+  const semifinalWinners = useMemo(() => {
+    if (semiMatches.length < 2) return [];
+    const winners = [];
+    for (const m of semiMatches) {
+      const s1 = parseInt(m.score1, 10);
+      const s2 = parseInt(m.score2, 10);
+      if (m.score1 === '' || m.score2 === '' || isNaN(s1) || isNaN(s2) || s1 === s2) {
+        return [];
+      }
+      winners.push(s1 > s2 ? m.team1 : m.team2);
+    }
+    return winners;
+  }, [semiMatches]);
+
+  // --- PROCEED TO CHAMPIONSHIP (SWAP SEMIFINAL WINNERS + BEST OF N) ---
+  const proceedToChampionship = () => {
+    if (semifinalWinners.length < 2) {
+      setErrorMsg('Complete both semifinal matches with non-tied scores to advance to the Championship.');
+      return;
+    }
+
+    const w1 = semifinalWinners[0];
+    const w2 = semifinalWinners[1];
+
+    // Swap partners between the 2 semifinal winners
+    const finalTeam1 = {
+      id: 'CH-1',
+      name: 'Championship Team 1 (Swapped)',
+      playerA: w1.playerA,
+      playerB: w2.playerB
+    };
+    const finalTeam2 = {
+      id: 'CH-2',
+      name: 'Championship Team 2 (Swapped)',
+      playerA: w2.playerA,
+      playerB: w1.playerB
+    };
+
+    const games = [];
+    for (let g = 1; g <= bestOfCount; g++) {
+      games.push({
+        id: `CG-${g}`,
         gameNumber: g,
-        team1: { playerA: swappedTeam1Players[0], playerB: swappedTeam1Players[1], name: 'Finalist Team 1' },
-        team2: { playerA: swappedTeam2Players[0], playerB: swappedTeam2Players[1], name: 'Finalist Team 2' },
         score1: '',
         score2: ''
       });
     }
 
-    setChampionshipMatches(matches);
+    setChampionshipTeams({ team1: finalTeam1, team2: finalTeam2 });
+    setChampionshipMatches(games);
     setErrorMsg('');
     setStage('championship');
   };
 
-  const handleChampionshipScoreChange = (matchIdx, field, val) => {
+  const handleChampionshipScoreChange = (idx, field, val) => {
     if (val !== '' && !/^\d+$/.test(val)) return;
     setChampionshipMatches(prev => {
       const copy = prev.map(m => ({ ...m }));
-      copy[matchIdx][field] = val;
+      copy[idx][field] = val;
       return copy;
     });
     setErrorMsg('');
   };
 
-  const simulateChampionshipSeries = () => {
+  const simulateChampionship = () => {
+    const winsNeeded = Math.ceil(bestOfCount / 2);
+    let t1Wins = 0;
+    let t2Wins = 0;
+
     setChampionshipMatches(prev =>
       prev.map(m => {
+        if (t1Wins >= winsNeeded || t2Wins >= winsNeeded) {
+          return { ...m, score1: '', score2: '' };
+        }
         const [s1, s2] = generateRandomScores(15, 21);
+        const n1 = parseInt(s1, 10);
+        const n2 = parseInt(s2, 10);
+        if (n1 > n2) t1Wins++;
+        else t2Wins++;
         return { ...m, score1: s1, score2: s2 };
       })
     );
     setErrorMsg('');
   };
 
-  const championshipWinner = useMemo(() => {
-    if (championshipMatches.length === 0) return null;
+  const championshipSummary = useMemo(() => {
+    if (!championshipTeams || championshipMatches.length === 0) return null;
+    const winsNeeded = Math.ceil(bestOfCount / 2);
     let t1Wins = 0;
     let t2Wins = 0;
-    let allCompleted = true;
 
     championshipMatches.forEach(m => {
       const s1 = parseInt(m.score1, 10);
       const s2 = parseInt(m.score2, 10);
-      if (isNaN(s1) || isNaN(s2) || s1 === s2) {
-        allCompleted = false;
-      } else if (s1 > s2) {
-        t1Wins++;
-      } else {
-        t2Wins++;
+      if (m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2) {
+        if (s1 > s2) t1Wins++;
+        else t2Wins++;
       }
     });
 
-    if (!allCompleted && t1Wins === 0 && t2Wins === 0) return null;
-
-    if (t1Wins > t2Wins) {
-      return {
-        name: 'Championship Team 1',
-        playerA: championshipMatches[0].team1.playerA,
-        playerB: championshipMatches[0].team1.playerB,
-        wins: `${t1Wins} - ${t2Wins} Games`
-      };
-    } else if (t2Wins > t1Wins) {
-      return {
-        name: 'Championship Team 2',
-        playerA: championshipMatches[0].team2.playerA,
-        playerB: championshipMatches[0].team2.playerB,
-        wins: `${t2Wins} - ${t1Wins} Games`
-      };
+    let champion = null;
+    if (t1Wins >= winsNeeded) {
+      champion = { ...championshipTeams.team1, seriesRecord: `${t1Wins} - ${t2Wins}` };
+    } else if (t2Wins >= winsNeeded) {
+      champion = { ...championshipTeams.team2, seriesRecord: `${t2Wins} - ${t1Wins}` };
     }
-    return null;
-  }, [championshipMatches]);
+
+    return { t1Wins, t2Wins, winsNeeded, champion };
+  }, [championshipTeams, championshipMatches, bestOfCount]);
 
   const resetTournament = () => {
     setStage('setup');
     setTeams([]);
     setRounds([]);
-    setQualifiedPlayoffTeams([]);
-    setPlayoffRounds([]);
-    setChampionshipFinalists([]);
+    setPlayoffTeams([]);
+    setPlayoffMatches([]);
+    setSemiMatches([]);
+    setChampionshipTeams(null);
     setChampionshipMatches([]);
     setErrorMsg('');
   };
 
   const BadgeA = () => (
-    <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold tracking-wider uppercase rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shadow-2xs shrink-0">
+    <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold tracking-wider uppercase rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shrink-0">
       A
     </span>
   );
 
   const BadgeB = () => (
-    <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold tracking-wider uppercase rounded-md bg-sky-100 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shadow-2xs shrink-0">
+    <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold tracking-wider uppercase rounded-md bg-sky-100 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
       B
     </span>
   );
 
   const numTeams = totalPlayers / 2;
-  const maxMatchesPerTeam = Math.max(1, numTeams - 1);
 
   return (
-    <div className="min-h-screen bg-slate-50/50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased transition-colors selection:bg-blue-600 selection:text-white">
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-sky-500 flex items-center justify-center text-white shadow-md shadow-blue-500/25 shrink-0">
+    <div className="min-h-screen bg-slate-50/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased">
+      {/* Header */}
+      <header className="sticky top-0 z-30 bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-sky-500 flex items-center justify-center text-white shadow-md shadow-blue-500/25 shrink-0">
               <Trophy className="w-5 h-5" />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-bold tracking-tight leading-tight truncate bg-gradient-to-r from-slate-900 via-slate-800 to-blue-950 dark:from-white dark:to-blue-200 bg-clip-text text-transparent">
-                Dynamic Playoff Tournament
-              </h1>
-            </div>
+            <h1 className="text-base sm:text-lg font-bold tracking-tight truncate">
+              8-Team Playoff & Semis Manager
+            </h1>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {stage !== 'setup' && (
-              <button
-                onClick={resetTournament}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-2xs transition active:scale-98 cursor-pointer"
-              >
-                <RotateCcw className="w-4 h-4 text-slate-500" />
-                <span>Reset Tournament</span>
-              </button>
-            )}
-          </div>
+          {stage !== 'setup' && (
+            <button
+              onClick={resetTournament}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-500" />
+              <span>Reset</span>
+            </button>
+          )}
         </div>
 
-        {/* Stage Stepper Navigation */}
-        <div className="bg-slate-100/60 dark:bg-slate-900/40 border-t border-slate-200/60 dark:border-slate-800/80">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+        {/* Stage Stepper */}
+        <div className="bg-slate-100/70 dark:bg-slate-900/50 border-t border-slate-200/60 dark:border-slate-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 overflow-x-auto">
             {[
-              { id: 'setup', label: '0. Roster & Config Setup', icon: UserPlus, enabled: true },
-              { id: 'qualifying', label: '1. Qualifying Ladder', icon: ListOrdered, enabled: teams.length > 0 },
-              { id: 'playoffs', label: '2. Playoff Stage', icon: Swords, enabled: qualifiedPlayoffTeams.length > 0 },
-              { id: 'championship', label: '3. Championship Series', icon: Trophy, enabled: championshipFinalists.length === 2 }
-            ].map((tab, index) => {
+              { id: 'setup', label: '0. Setup', icon: UserPlus, enabled: true },
+              { id: 'qualifying', label: '1. Qualifying', icon: ListOrdered, enabled: teams.length > 0 },
+              { id: 'playoffs', label: '2. 8-Team Playoffs & Semis', icon: Swords, enabled: playoffTeams.length === 8 },
+              { id: 'championship', label: `3. Championship (Best of ${bestOfCount})`, icon: Trophy, enabled: Boolean(championshipTeams) }
+            ].map((tab, idx) => {
               const Icon = tab.icon;
-              const isActive = stage === tab.id;
+              const active = stage === tab.id;
               return (
                 <React.Fragment key={tab.id}>
                   <button
                     disabled={!tab.enabled}
-                    onClick={() => {
-                      setErrorMsg('');
-                      setStage(tab.id);
-                    }}
-                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap transition-all shadow-2xs ${
-                      isActive
-                        ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20 ring-2 ring-blue-600/20'
+                    onClick={() => { setErrorMsg(''); setStage(tab.id); }}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap transition ${
+                      active
+                        ? 'bg-blue-600 text-white shadow-sm'
                         : tab.enabled
-                        ? 'text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800/60 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200/70 dark:border-slate-700/60 cursor-pointer'
-                        : 'text-slate-400 dark:text-slate-600 bg-transparent border border-transparent cursor-not-allowed opacity-60'
+                        ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 cursor-pointer'
+                        : 'text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{tab.label}</span>
+                    <span>{tab.label}</span>
                   </button>
-                  {index < 3 && (
-                    <ChevronRight className="w-4 h-4 text-slate-400/60 shrink-0" />
-                  )}
+                  {idx < 3 && <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />}
                 </React.Fragment>
               );
             })}
@@ -802,530 +736,189 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Global Error Banner */}
         {errorMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-sm shadow-sm">
-            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
-            <span className="font-medium break-words">{errorMsg}</span>
+          <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-sm">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
+            <span className="font-medium">{errorMsg}</span>
           </div>
         )}
 
         {/* ===================================================================== */}
-        {/* STAGE 0: ROSTER & CONFIG SETUP                                        */}
+        {/* STAGE 0: SETUP                                                        */}
         {/* ===================================================================== */}
         {stage === 'setup' && (
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-6 sm:p-8 shadow-xs">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
-                {/* Player Count Selector */}
-                <div>
-                  <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Total Players (Even, 4 - 32)
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => handlePlayerCountChange(Math.max(4, totalPlayers - 2))}
-                      disabled={totalPlayers <= 4}
-                      className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
-                    >
-                      <Minus className="w-5 h-5" />
-                    </button>
-                    <div className="flex-1 min-w-0 text-center py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-sm sm:text-base truncate">
-                      {totalPlayers} Players <span className="text-xs font-normal text-slate-500">({numTeams} Teams)</span>
-                    </div>
-                    <button
-                      onClick={() => handlePlayerCountChange(Math.min(32, totalPlayers + 2))}
-                      disabled={totalPlayers >= 32}
-                      className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Requirement 1: Playoff Teams Count (Even Number) */}
-                <div>
-                  <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Playoff Teams (Even, 2 - {numTeams})
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => handlePlayoffTeamCountChange(Math.max(2, playoffTeamCount - 2))}
-                      disabled={playoffTeamCount <= 2}
-                      className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
-                    >
-                      <Minus className="w-5 h-5" />
-                    </button>
-                    <div className="flex-1 min-w-0 text-center py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-sm sm:text-base truncate">
-                      {playoffTeamCount} Teams <span className="text-xs font-normal text-slate-500">{playoffTeamCount === 6 ? '(Special 6-Team Swap)' : ''}</span>
-                    </div>
-                    <button
-                      onClick={() => handlePlayoffTeamCountChange(Math.min(numTeams, playoffTeamCount + 2))}
-                      disabled={playoffTeamCount >= numTeams || (playoffTeamCount + 2) > numTeams}
-                      className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer shrink-0"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Requirement 3: Playoff Rounds Count & Requirement 6: Championship Games */}
-                <div>
-                  <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Playoff Rounds & Champ Games
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <select
-                        value={playoffRoundsCount}
-                        onChange={(e) => setPlayoffRoundsCount(parseInt(e.target.value, 10))}
-                        aria-label="Playoff Rounds Count"
-                        className="w-full py-2.5 px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold"
-                      >
-                        {[1, 2, 3, 4, 5].map(r => (
-                          <option key={r} value={r}>{r} Playoff Round{r > 1 ? 's' : ''}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <select
-                        value={championshipGamesCount}
-                        onChange={(e) => setChampionshipGamesCount(parseInt(e.target.value, 10))}
-                        aria-label="Championship Games Count"
-                        className="w-full py-2.5 px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold"
-                      >
-                        {[1, 3, 5, 7].map(g => (
-                          <option key={g} value={g}>{g} Champ Game{g > 1 ? 's' : ''}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Roster Header Action Bar */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 pt-6">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-bold flex items-center gap-2 truncate">
-                    <Users className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
-                    <span className="truncate">Enter Player Names ({totalPlayers})</span>
-                  </h2>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2.5">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <label className="block text-sm font-bold mb-2">
+                  Total Players (Even, 16 - 32)
+                </label>
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={handleAutoFill}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-98 cursor-pointer"
+                    onClick={() => handlePlayerCountChange(Math.max(16, totalPlayers - 2))}
+                    disabled={totalPlayers <= 16}
+                    className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 flex items-center justify-center font-bold disabled:opacity-40 cursor-pointer"
                   >
-                    <Sparkles className="w-4 h-4 text-blue-500 shrink-0" />
-                    <span>Auto-Fill Names</span>
+                    <Minus className="w-5 h-5" />
                   </button>
+                  <div className="flex-1 text-center py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-mono font-bold text-sm">
+                    {totalPlayers} Players ({numTeams} Teams)
+                  </div>
                   <button
-                    onClick={handleClearInputs}
-                    className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition active:scale-98 cursor-pointer"
+                    onClick={() => handlePlayerCountChange(Math.min(32, totalPlayers + 2))}
+                    disabled={totalPlayers >= 32}
+                    className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 flex items-center justify-center font-bold disabled:opacity-40 cursor-pointer"
                   >
-                    <span>Clear</span>
-                  </button>
-                  <button
-                    onClick={startTournament}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition active:scale-98 cursor-pointer"
-                  >
-                    <Shuffle className="w-4 h-4 shrink-0" />
-                    <span>Randomize Teams & Start</span>
+                    <Plus className="w-5 h-5" />
                   </button>
                 </div>
               </div>
 
-              {/* Player Input Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5 mt-6">
-                {playerInputs.map((name, idx) => (
-                  <div key={idx} className="relative group min-w-0">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono font-semibold text-slate-400 group-focus-within:text-blue-600 dark:group-focus-within:text-blue-400 transition-colors pointer-events-none">
-                      #{String(idx + 1).padStart(2, '0')}
-                    </span>
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => handlePlayerChange(idx, e.target.value)}
-                      placeholder={`Player ${String(idx + 1).padStart(2, '0')}`}
-                      className="w-full pl-12 pr-3.5 py-3 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700/80 bg-slate-50/60 dark:bg-slate-800/40 focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all shadow-2xs truncate"
-                    />
-                  </div>
-                ))}
+              <div>
+                <label className="block text-sm font-bold mb-2">
+                  Playoff Bracket Format
+                </label>
+                <div className="py-2.5 px-4 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 text-xs sm:text-sm font-semibold text-blue-800 dark:text-blue-200">
+                  8 Teams • Adjacent Partner Swap • Point-Diff Ranking ➔ Semis
+                </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-bold mb-2">
+                  Championship Series Format
+                </label>
+                <select
+                  value={bestOfCount}
+                  onChange={(e) => setBestOfCount(parseInt(e.target.value, 10))}
+                  aria-label="Championship Best Of Format"
+                  className="w-full py-2.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-sm font-bold"
+                >
+                  <option value={1}>Best of 1 Game</option>
+                  <option value={3}>Best of 3 Games</option>
+                  <option value={5}>Best of 5 Games</option>
+                  <option value={7}>Best of 7 Games</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                <span>Player Roster ({totalPlayers})</span>
+              </h2>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  onClick={handleAutoFill}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 transition cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-blue-500" />
+                  <span>Auto-Fill Names</span>
+                </button>
+                <button
+                  onClick={handleClearInputs}
+                  className="px-3.5 py-2.5 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={startTournament}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition cursor-pointer"
+                >
+                  <Shuffle className="w-4 h-4" />
+                  <span>Randomize Teams & Start</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
+              {playerInputs.map((name, idx) => (
+                <div key={idx} className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono font-semibold text-slate-400">
+                    #{String(idx + 1).padStart(2, '0')}
+                  </span>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => handlePlayerChange(idx, e.target.value)}
+                    placeholder={`Player ${String(idx + 1).padStart(2, '0')}`}
+                    className="w-full pl-12 pr-3.5 py-3 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40 focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                </div>
+              ))}
             </div>
           </div>
         )}
 
         {/* ===================================================================== */}
-        {/* STAGE 1: QUALIFYING ROUND                                             */}
+        {/* STAGE 1: QUALIFYING                                                   */}
         {/* ===================================================================== */}
         {stage === 'qualifying' && (
           <div className="space-y-6">
-            {/* Top Action Bar */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-              <div className="min-w-0">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
                 <div className="flex items-center gap-3 flex-wrap">
-                  <h2 className="text-xl font-bold tracking-tight truncate">Stage 1: Qualifying Ladder</h2>
-                  <span className="px-3 py-1 text-xs font-bold rounded-full bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shrink-0">
-                    {completedQualifyingMatches} / {rounds.reduce((acc, r) => acc + r.length, 0)} Completed
+                  <h2 className="text-xl font-bold">Stage 1: Qualifying Ladder</h2>
+                  <span className="px-3 py-1 text-xs font-bold rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                    {completedQualifyingMatches} / {totalQualifyingMatchesCount} Completed
                   </span>
                 </div>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Top {playoffTeamCount} teams on the ladder advance to the Playoffs.
+                  Top 8 teams qualify for the 8-team playoff bracket.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <button
-                  onClick={rerandomizeTeamsAndSchedule}
-                  className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition active:scale-98 cursor-pointer shadow-2xs"
+                  onClick={startTournament}
+                  className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 transition cursor-pointer"
                 >
-                  <Shuffle className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                  <Shuffle className="w-4 h-4 text-blue-600" />
                   <span>Re-Randomize</span>
                 </button>
                 <button
                   onClick={simulateAllQualifying}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-98 cursor-pointer shadow-2xs"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 transition cursor-pointer"
                 >
-                  <Play className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <Play className="w-4 h-4 text-emerald-600" />
                   <span>Simulate All</span>
                 </button>
                 <button
-                  onClick={advanceToPlotform}
-                  className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition active:scale-98 cursor-pointer ${
-                    completedQualifyingMatches === rounds.reduce((acc, r) => acc + r.length, 0)
+                  onClick={proceedToPlayoffs}
+                  className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${
+                    completedQualifyingMatches === totalQualifyingMatchesCount
                       ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
-                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
                   }`}
                 >
-                  <span>Proceed to Playoffs</span>
-                  <ChevronRight className="w-4 h-4 shrink-0" />
+                  <span>Start 8-Team Playoffs</span>
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* Assigned Teams Overview */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 shadow-xs">
-              <div className="flex items-center justify-between mb-3.5">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
-                  Assigned {numTeams} Teams (Role A & Role B)
+            {/* Generated Team Pairings Overview */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-xs">
+              <div className="flex items-center justify-between gap-2 mb-3.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-blue-600" />
+                  <span>Generated Team Pairings ({teams.length} Teams)</span>
                 </h3>
-                <button
-                  onClick={() => setStage('setup')}
-                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer shrink-0"
-                >
-                  Edit Roster Names
-                </button>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {teams.map((t) => (
                   <div
                     key={t.id}
-                    className="p-3 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 hover:border-blue-300 dark:hover:border-blue-700 transition-colors min-w-0"
+                    className="p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30"
                   >
-                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5 truncate">
+                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5">
                       {t.name}
                     </div>
-                    <div className="flex items-center gap-1.5 py-0.5 min-w-0 text-xs">
-                      <BadgeA /> <span className="truncate font-medium">{t.playerA}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 py-0.5 mt-0.5 min-w-0 text-xs">
-                      <BadgeB /> <span className="truncate font-medium">{t.playerB}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Main Split Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-              {/* Left Column: Match Schedule */}
-              <div className="xl:col-span-7 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
-                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/40">
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    {rounds.map((roundMatches, idx) => {
-                      const rNum = idx + 1;
-                      const doneCount = roundMatches.filter(
-                        m => m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2
-                      ).length;
-                      const isComplete = doneCount === roundMatches.length;
-                      return (
-                        <button
-                          key={rNum}
-                          onClick={() => setActiveRoundTab(rNum)}
-                          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
-                            activeRoundTab === rNum
-                              ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'
-                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/80'
-                          }`}
-                        >
-                          <span>Round {rNum}</span>
-                          {isComplete && (
-                            <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${activeRoundTab === rNum ? 'text-blue-200' : 'text-emerald-500'}`} />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    onClick={() => simulateSingleRound(activeRoundTab - 1)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition cursor-pointer shrink-0"
-                  >
-                    <Play className="w-3.5 h-3.5 shrink-0" />
-                    <span>Simulate R{activeRoundTab}</span>
-                  </button>
-                </div>
-
-                {/* Matches List for Active Round */}
-                <div className="p-4 sm:p-5 space-y-3.5">
-                  {(rounds[activeRoundTab - 1] || []).map((match, mIdx) => {
-                    const t1 = teamMap[match.team1Id];
-                    const t2 = teamMap[match.team2Id];
-                    if (!t1 || !t2) return null;
-
-                    const s1 = parseInt(match.score1, 10);
-                    const s2 = parseInt(match.score2, 10);
-                    const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
-                    const t1Won = hasWinner && s1 > s2;
-                    const t2Won = hasWinner && s2 > s1;
-
-                    return (
-                      <div
-                        key={match.id}
-                        className="p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/30 flex flex-col sm:flex-row items-center justify-between gap-3.5 transition-all min-w-0"
-                      >
-                        {/* Team 1 */}
-                        <div className={`flex-1 w-full sm:w-auto text-left sm:text-right min-w-0 ${t1Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
-                          <div className="text-sm font-bold flex items-center sm:justify-end gap-2 min-w-0">
-                            <span className="truncate">{t1.name}</span>
-                            {t1Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
-                          </div>
-                          <div className="mt-1.5 space-y-1">
-                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
-                              <span className="truncate">{t1.playerA}</span>
-                              <BadgeA />
-                            </div>
-                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
-                              <span className="truncate">{t1.playerB}</span>
-                              <BadgeB />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Score Inputs */}
-                        <div className="flex items-center gap-2.5 shrink-0">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={3}
-                            value={match.score1}
-                            onChange={(e) => handleQualifyingScoreChange(activeRoundTab - 1, mIdx, 'score1', e.target.value)}
-                            placeholder="0"
-                            aria-label={`${t1.name} score`}
-                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
-                              t1Won
-                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
-                            }`}
-                          />
-                          <span className="text-xs font-extrabold text-slate-400 uppercase tracking-widest shrink-0">vs</span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={3}
-                            value={match.score2}
-                            onChange={(e) => handleQualifyingScoreChange(activeRoundTab - 1, mIdx, 'score2', e.target.value)}
-                            placeholder="0"
-                            aria-label={`${t2.name} score`}
-                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
-                              t2Won
-                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
-                            }`}
-                          />
-                        </div>
-
-                        {/* Team 2 */}
-                        <div className={`flex-1 w-full sm:w-auto text-left min-w-0 ${t2Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
-                          <div className="text-sm font-bold flex items-center gap-2 min-w-0">
-                            <span className="truncate">{t2.name}</span>
-                            {t2Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
-                          </div>
-                          <div className="mt-1.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
-                              <BadgeA />
-                              <span className="truncate">{t2.playerA}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
-                              <BadgeB />
-                              <span className="truncate">{t2.playerB}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Right Column: Live Ladder Standings */}
-              <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
-                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <ListOrdered className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                    <h3 className="font-bold text-sm sm:text-base truncate">Live Ladder Standings</h3>
-                  </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shrink-0">
-                    Top {playoffTeamCount} Qualify
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[340px]">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50/40 dark:bg-slate-900/20">
-                        <th className="py-3 pl-4 pr-2">Rank</th>
-                        <th className="py-3 px-2">Team & Players</th>
-                        <th className="py-3 px-2 text-center">MP</th>
-                        <th className="py-3 px-2 text-center">W</th>
-                        <th className="py-3 px-2 text-center">Diff</th>
-                        <th className="py-3 pl-2 pr-4 text-center">PF</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-sm">
-                      {ladderStandings.map((team, idx) => {
-                        const isQualifying = idx < playoffTeamCount;
-                        return (
-                          <tr
-                            key={team.id}
-                            className={`transition-colors ${
-                              isQualifying
-                                ? 'bg-blue-50/60 dark:bg-blue-950/30'
-                                : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
-                            }`}
-                          >
-                            <td className="py-3 pl-4 pr-2 font-mono font-bold">
-                              <span
-                                className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
-                                  isQualifying
-                                    ? 'bg-blue-600 text-white shadow-2xs'
-                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                                }`}
-                              >
-                                {idx + 1}
-                              </span>
-                            </td>
-                            <td className="py-3 px-2 min-w-0 max-w-[160px] sm:max-w-[200px]">
-                              <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0">
-                                <span className="truncate">{team.name}</span>
-                                {isQualifying && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 shrink-0">
-                                    Q
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1.5 min-w-0">
-                                <div className="flex items-center gap-1.5 font-medium min-w-0">
-                                  <BadgeA /> <span className="truncate">{team.playerA}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-medium min-w-0">
-                                  <BadgeB /> <span className="truncate">{team.playerB}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 text-center font-mono text-xs text-slate-500 font-medium whitespace-nowrap">
-                              {team.played}/{matchesPerTeam}
-                            </td>
-                            <td className="py-3 px-2 text-center font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                              {team.wins}
-                            </td>
-                            <td className={`py-3 px-2 text-center font-mono text-xs font-semibold whitespace-nowrap ${
-                              team.diff > 0
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : team.diff < 0
-                                ? 'text-rose-600 dark:text-rose-400'
-                                : 'text-slate-500'
-                            }`}>
-                              {team.diff > 0 ? `+${team.diff}` : team.diff}
-                            </td>
-                            <td className="py-3 pl-2 pr-4 text-center font-mono text-xs text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
-                              {team.pf}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================== */}
-        {/* STAGE 2: PLAYOFFS STAGE                                               */}
-        {/* ===================================================================== */}
-        {stage === 'playoffs' && (
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-xl font-bold tracking-tight truncate">Stage 2: Playoffs ({playoffTeamCount} Teams, {playoffRounds.length} Rounds)</h2>
-                  {playoffTeamCount === 6 && (
-                    <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                      Top 2 Teams Swapped for Doubles
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Playoff doubles randomized. Top 2 ranked teams/players advance to Championship.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                <button
-                  onClick={simulateAllPlayoffs}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-98 cursor-pointer shadow-2xs"
-                >
-                  <Play className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Simulate All Playoffs</span>
-                </button>
-                <button
-                  onClick={advanceToChampionship}
-                  className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition active:scale-98 cursor-pointer ${
-                    completedPlayoffMatches === totalPlayoffMatchesCount
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
-                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  <span>Proceed to Championship</span>
-                  <ChevronRight className="w-4 h-4 shrink-0" />
-                </button>
-              </div>
-            </div>
-
-            {/* Playoff Teams Overview Grid */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 shadow-xs">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-3.5 truncate">
-                Qualified Playoff Teams & Randomized/Swapped Doubles
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {qualifiedPlayoffTeams.map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-3 rounded-2xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 min-w-0"
-                  >
-                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5 truncate">
-                      {t.name}
-                    </div>
-                    <div className="flex items-center gap-1.5 py-0.5 min-w-0 text-xs font-medium">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold">
                       <BadgeA /> <span className="truncate">{t.playerA}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 py-0.5 mt-0.5 min-w-0 text-xs font-medium">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold mt-1">
                       <BadgeB /> <span className="truncate">{t.playerB}</span>
                     </div>
                   </div>
@@ -1333,52 +926,48 @@ export default function App() {
               </div>
             </div>
 
-            {/* Playoff Matches & Standings Grid */}
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-              {/* Left Column: Playoff Round Schedule */}
-              <div className="xl:col-span-7 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
-                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/40">
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    {playoffRounds.map((roundMatches, idx) => {
+              {/* Matches */}
+              <div className="xl:col-span-7 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 bg-slate-50/50 dark:bg-slate-900/40">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {rounds.map((roundMatches, idx) => {
                       const rNum = idx + 1;
-                      const doneCount = roundMatches.filter(
-                        m => m.score1 !== '' && m.score2 !== '' && m.score1 !== m.score2
-                      ).length;
-                      const isComplete = doneCount === roundMatches.length;
+                      const isComplete = roundMatches.every(m => {
+                        const s1 = parseInt(m.score1, 10);
+                        const s2 = parseInt(m.score2, 10);
+                        return m.score1 !== '' && m.score2 !== '' && !isNaN(s1) && !isNaN(s2) && s1 !== s2;
+                      });
                       return (
                         <button
                           key={rNum}
-                          onClick={() => setActivePlayoffRoundTab(rNum)}
-                          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
-                            activePlayoffRoundTab === rNum
-                              ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'
-                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/80'
+                          onClick={() => setActiveRoundTab(rNum)}
+                          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                            activeRoundTab === rNum
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                           }`}
                         >
-                          <span>Playoff Round {rNum}</span>
-                          {isComplete && (
-                            <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${activePlayoffRoundTab === rNum ? 'text-blue-200' : 'text-emerald-500'}`} />
-                          )}
+                          <span>Round {rNum}</span>
+                          {isComplete && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
                         </button>
                       );
                     })}
                   </div>
-
                   <button
-                    onClick={() => simulateSinglePlayoffRound(activePlayoffRoundTab - 1)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition cursor-pointer shrink-0"
+                    onClick={() => simulateSingleRound(activeRoundTab - 1)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
                   >
-                    <Play className="w-3.5 h-3.5 shrink-0" />
-                    <span>Simulate PR{activePlayoffRoundTab}</span>
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Simulate R{activeRoundTab}</span>
                   </button>
                 </div>
 
-                <div className="p-4 sm:p-5 space-y-3.5">
-                  {(playoffRounds[activePlayoffRoundTab - 1] || []).map((match, mIdx) => {
-                    const t1 = playoffTeamMap[match.team1Id];
-                    const t2 = playoffTeamMap[match.team2Id];
+                <div className="p-4 sm:p-5 space-y-3">
+                  {(rounds[activeRoundTab - 1] || []).map((match, mIdx) => {
+                    const t1 = teamMap[match.team1Id];
+                    const t2 = teamMap[match.team2Id];
                     if (!t1 || !t2) return null;
-
                     const s1 = parseInt(match.score1, 10);
                     const s2 = parseInt(match.score2, 10);
                     const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
@@ -1388,73 +977,50 @@ export default function App() {
                     return (
                       <div
                         key={match.id}
-                        className="p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/30 flex flex-col sm:flex-row items-center justify-between gap-3.5 transition-all min-w-0"
+                        className="p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/30 flex flex-col sm:flex-row items-center justify-between gap-3"
                       >
-                        {/* Team 1 */}
-                        <div className={`flex-1 w-full sm:w-auto text-left sm:text-right min-w-0 ${t1Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
-                          <div className="text-sm font-bold flex items-center sm:justify-end gap-2 min-w-0">
-                            <span className="truncate">{t1.name}</span>
-                            {t1Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
-                          </div>
-                          <div className="mt-1.5 space-y-1">
-                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
-                              <span className="truncate">{t1.playerA}</span>
-                              <BadgeA />
+                        <div className={`flex-1 w-full sm:w-auto text-left sm:text-right ${t1Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
+                          <div className="text-sm font-bold">{t1.name}</div>
+                          <div className="mt-1 space-y-1 text-xs">
+                            <div className="flex items-center sm:justify-end gap-1.5">
+                              <span>{t1.playerA}</span> <BadgeA />
                             </div>
-                            <div className="flex items-center sm:justify-end gap-1.5 text-xs font-medium min-w-0">
-                              <span className="truncate">{t1.playerB}</span>
-                              <BadgeB />
+                            <div className="flex items-center sm:justify-end gap-1.5">
+                              <span>{t1.playerB}</span> <BadgeB />
                             </div>
                           </div>
                         </div>
 
-                        {/* Scores */}
-                        <div className="flex items-center gap-2.5 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0">
                           <input
                             type="text"
                             inputMode="numeric"
                             maxLength={3}
                             value={match.score1}
-                            onChange={(e) => handlePlayoffScoreChange(activePlayoffRoundTab - 1, mIdx, 'score1', e.target.value)}
+                            onChange={(e) => handleQualifyingScoreChange(activeRoundTab - 1, mIdx, 'score1', e.target.value)}
                             placeholder="0"
-                            aria-label={`${t1.name} playoff score`}
-                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
-                              t1Won
-                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
-                            }`}
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                           />
-                          <span className="text-xs font-extrabold text-slate-400 uppercase tracking-widest shrink-0">vs</span>
+                          <span className="text-xs font-extrabold text-slate-400">VS</span>
                           <input
                             type="text"
                             inputMode="numeric"
                             maxLength={3}
                             value={match.score2}
-                            onChange={(e) => handlePlayoffScoreChange(activePlayoffRoundTab - 1, mIdx, 'score2', e.target.value)}
+                            onChange={(e) => handleQualifyingScoreChange(activeRoundTab - 1, mIdx, 'score2', e.target.value)}
                             placeholder="0"
-                            aria-label={`${t2.name} playoff score`}
-                            className={`w-14 h-12 text-center font-bold text-base rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
-                              t2Won
-                                ? 'border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs'
-                            }`}
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                           />
                         </div>
 
-                        {/* Team 2 */}
-                        <div className={`flex-1 w-full sm:w-auto text-left min-w-0 ${t2Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
-                          <div className="text-sm font-bold flex items-center gap-2 min-w-0">
-                            <span className="truncate">{t2.name}</span>
-                            {t2Won && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-bold shrink-0">Win</span>}
-                          </div>
-                          <div className="mt-1.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
-                              <BadgeA />
-                              <span className="truncate">{t2.playerA}</span>
+                        <div className={`flex-1 w-full sm:w-auto text-left ${t2Won ? 'font-bold text-blue-600 dark:text-blue-400' : ''}`}>
+                          <div className="text-sm font-bold">{t2.name}</div>
+                          <div className="mt-1 space-y-1 text-xs">
+                            <div className="flex items-center gap-1.5">
+                              <BadgeA /> <span>{t2.playerA}</span>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
-                              <BadgeB />
-                              <span className="truncate">{t2.playerB}</span>
+                            <div className="flex items-center gap-1.5">
+                              <BadgeB /> <span>{t2.playerB}</span>
                             </div>
                           </div>
                         </div>
@@ -1464,85 +1030,50 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Column: Playoff Standings (Requirement 4: Top 2 proceed to championship) */}
-              <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden min-w-0">
-                <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <ListOrdered className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                    <h3 className="font-bold text-sm sm:text-base truncate">Playoff Standings</h3>
-                  </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shrink-0">
-                    Top 2 ➔ Championship
+              {/* Standings */}
+              <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40">
+                  <h3 className="font-bold text-sm sm:text-base">Qualifying Standings</h3>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400">
+                    Top 8 Advance
                   </span>
                 </div>
-
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[340px]">
+                  <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50/40 dark:bg-slate-900/20">
-                        <th className="py-3 pl-4 pr-2">Rank</th>
-                        <th className="py-3 px-2">Team & Players</th>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold uppercase text-slate-400">
+                        <th className="py-3 pl-4 pr-2">#</th>
+                        <th className="py-3 px-2">Team</th>
                         <th className="py-3 px-2 text-center">W</th>
                         <th className="py-3 px-2 text-center">Diff</th>
                         <th className="py-3 pl-2 pr-4 text-center">PF</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-sm">
-                      {playoffStandings.map((team, idx) => {
-                        const isTop2 = idx < 2;
+                      {ladderStandings.map((team, idx) => {
+                        const qualifies = idx < 8;
                         return (
-                          <tr
-                            key={team.id}
-                            className={`transition-colors ${
-                              isTop2
-                                ? 'bg-blue-50/60 dark:bg-blue-950/30'
-                                : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
-                            }`}
-                          >
+                          <tr key={team.id} className={qualifies ? 'bg-blue-50/60 dark:bg-blue-950/25' : ''}>
                             <td className="py-3 pl-4 pr-2 font-mono font-bold">
-                              <span
-                                className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
-                                  isTop2
-                                    ? 'bg-blue-600 text-white shadow-2xs'
-                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                                }`}
-                              >
+                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs ${
+                                qualifies ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                              }`}>
                                 {idx + 1}
                               </span>
                             </td>
-                            <td className="py-3 px-2 min-w-0 max-w-[160px] sm:max-w-[200px]">
-                              <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0">
-                                <span className="truncate">{team.name}</span>
-                                {isTop2 && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 shrink-0">
-                                    Finalist
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1.5 min-w-0">
-                                <div className="flex items-center gap-1.5 font-medium min-w-0">
-                                  <BadgeA /> <span className="truncate">{team.playerA}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-medium min-w-0">
-                                  <BadgeB /> <span className="truncate">{team.playerB}</span>
-                                </div>
+                            <td className="py-3 px-2">
+                              <div className="font-bold">{team.name}</div>
+                              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-1 mt-0.5">
+                                <span>{team.playerA}</span> • <span>{team.playerB}</span>
                               </div>
                             </td>
-                            <td className="py-3 px-2 text-center font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                              {team.wins}
-                            </td>
-                            <td className={`py-3 px-2 text-center font-mono text-xs font-semibold whitespace-nowrap ${
-                              team.diff > 0
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : team.diff < 0
-                                ? 'text-rose-600 dark:text-rose-400'
-                                : 'text-slate-500'
+                            <td className="py-3 px-2 text-center font-bold">{team.wins}</td>
+                            <td className={`py-3 px-2 text-center font-mono text-xs font-semibold ${
+                              team.diff > 0 ? 'text-emerald-600' : team.diff < 0 ? 'text-rose-600' : 'text-slate-500'
                             }`}>
                               {team.diff > 0 ? `+${team.diff}` : team.diff}
                             </td>
-                            <td className="py-3 pl-2 pr-4 text-center font-mono text-xs text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
-                              {team.pf}
-                            </td>
+                            <td className="py-3 pl-2 pr-4 text-center font-mono text-xs text-slate-500">{team.pf}</td>
                           </tr>
                         );
                       })}
@@ -1555,130 +1086,398 @@ export default function App() {
         )}
 
         {/* ===================================================================== */}
-        {/* STAGE 3: CHAMPIONSHIP SERIES                                          */}
+        {/* STAGE 2: 8-TEAM PLAYOFFS & SEMIS                                      */}
         {/* ===================================================================== */}
-        {stage === 'championship' && (
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold tracking-tight flex items-center gap-2.5 min-w-0">
-                  <Trophy className="w-6 h-6 text-blue-500 shrink-0" />
-                  <span className="truncate">Stage 3: Championship Series ({championshipMatches.length} Games)</span>
+        {stage === 'playoffs' && (
+          <div className="space-y-8">
+            {/* Playoff Header */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Swords className="w-5 h-5 text-blue-600" />
+                  <span>Stage 2A: 8-Team Playoffs (Adjacent Partner Swap)</span>
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Top 2 playoff teams players have been swapped for the championship matchup series.
+                  Partners swapped between adjacent ranks (1↔2, 3↔4, 5↔6, 7↔8). Winners are ranked by point differential.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <button
-                  onClick={simulateChampionshipSeries}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition active:scale-98 cursor-pointer"
+                  onClick={simulatePlayoffMatches}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 transition cursor-pointer"
                 >
-                  <Play className="w-4 h-4 shrink-0" />
-                  <span>Simulate Series</span>
+                  <Play className="w-4 h-4 text-emerald-600" />
+                  <span>Simulate 4 Playoff Matches</span>
+                </button>
+                <button
+                  onClick={generateSemifinals}
+                  disabled={rankedPlayoffWinners.length < 4}
+                  className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${
+                    rankedPlayoffWinners.length === 4
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
+                  <span>Build Semifinals</span>
                 </button>
               </div>
             </div>
 
-            {/* Celebratory Champions Banner */}
-            {championshipWinner && (
-              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-700 via-blue-600 to-sky-600 p-6 sm:p-8 text-white shadow-xl">
-                <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
-                <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6 min-w-0">
-                  <div className="flex items-center gap-4.5 text-center md:text-left flex-col md:flex-row min-w-0">
-                    <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 shadow-lg">
-                      <Award className="w-9 h-9 text-white" />
+            {/* Swapped 8 Playoff Teams Strip */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-xs">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                8 Playoff Teams After Adjacent Rank Partner Swap
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {playoffTeams.map((t) => (
+                  <div key={t.id} className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30">
+                    <div className="text-xs font-extrabold text-blue-600 dark:text-blue-400 mb-1.5">
+                      {t.name}
                     </div>
-                    <div className="min-w-0">
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-xs font-bold uppercase tracking-wider mb-2 shadow-2xs">
-                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                        <span>Tournament Champions</span>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold">
+                      <BadgeA /> <span className="truncate">{t.playerA}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold mt-1">
+                      <BadgeB /> <span className="truncate">{t.playerB}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 4 Playoff Bracket Matches + Ranked Winners Leaderboard */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+              <div className="xl:col-span-7 space-y-3.5">
+                {playoffMatches.map((m, idx) => {
+                  const t1 = playoffTeamMap[m.team1Id];
+                  const t2 = playoffTeamMap[m.team2Id];
+                  if (!t1 || !t2) return null;
+                  const s1 = parseInt(m.score1, 10);
+                  const s2 = parseInt(m.score2, 10);
+                  const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
+                  const t1Won = hasWinner && s1 > s2;
+                  const t2Won = hasWinner && s2 > s1;
+
+                  return (
+                    <div key={m.id} className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs">
+                      <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3">
+                        {m.label}
                       </div>
-                      <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight truncate">
-                        {championshipWinner.playerA} & {championshipWinner.playerB}
-                      </h3>
-                      <p className="text-white/90 text-sm mt-1 font-medium truncate">
-                        {championshipWinner.name} • Series Victory: <span className="font-bold underline decoration-white/40">{championshipWinner.wins}</span>
-                      </p>
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className={`flex-1 w-full sm:w-auto text-left sm:text-right ${t1Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
+                          <div className="text-sm font-bold">{t1.name} {t1Won && '• Winner'}</div>
+                          <div className="text-xs mt-1 space-y-1">
+                            <div className="flex items-center sm:justify-end gap-1.5"><span>{t1.playerA}</span> <BadgeA /></div>
+                            <div className="flex items-center sm:justify-end gap-1.5"><span>{t1.playerB}</span> <BadgeB /></div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={m.score1}
+                            onChange={(e) => handlePlayoffScoreChange(idx, 'score1', e.target.value)}
+                            placeholder="0"
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                          />
+                          <span className="text-xs font-extrabold text-slate-400">VS</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={3}
+                            value={m.score2}
+                            onChange={(e) => handlePlayoffScoreChange(idx, 'score2', e.target.value)}
+                            placeholder="0"
+                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                          />
+                        </div>
+
+                        <div className={`flex-1 w-full sm:w-auto text-left ${t2Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
+                          <div className="text-sm font-bold">{t2.name} {t2Won && '• Winner'}</div>
+                          <div className="text-xs mt-1 space-y-1">
+                            <div className="flex items-center gap-1.5"><BadgeA /> <span>{t2.playerA}</span></div>
+                            <div className="flex items-center gap-1.5"><BadgeB /> <span>{t2.playerB}</span></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Ranked Playoff Winners by Point Differential */}
+              <div className="xl:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-xs">
+                <h3 className="font-bold text-base mb-1">Playoff Winners Ranked by Point Diff</h3>
+                <p className="text-xs text-slate-500 mb-4">
+                  Top 4 playoff winners are ranked by point differential before adjacent-rank swapping for Semis.
+                </p>
+
+                {rankedPlayoffWinners.length < 4 ? (
+                  <div className="p-6 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-sm text-slate-400">
+                    Enter scores for all 4 playoff matches to rank winners by point differential.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {rankedPlayoffWinners.map((w) => (
+                      <div key={w.id} className="p-3.5 rounded-2xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold">
+                              {w.winnerRank}
+                            </span>
+                            <span className="font-bold text-sm truncate">{w.winnerLabel} ({w.name})</span>
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 truncate">
+                            {w.playerA} & {w.playerB}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-mono font-extrabold text-sm text-emerald-600 dark:text-emerald-400">
+                            {w.pointDiff > 0 ? `+${w.pointDiff}` : w.pointDiff} Diff
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-400">
+                            {w.pf} - {w.pa}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ================================================================= */}
+            {/* STAGE 2B: SEMIFINALS SECTION                                      */}
+            {/* ================================================================= */}
+            {semiMatches.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-blue-200 dark:border-blue-900/70 p-5 sm:p-6 shadow-xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div>
+                    <h3 className="text-lg font-bold flex items-center gap-2">
+                      <Swords className="w-5 h-5 text-blue-600" />
+                      <span>Stage 2B: Semifinals (Swapped Adjacent Winners)</span>
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+                      Adjacent winner partners swapped (1↔2, 3↔4). Match 1: Top vs Bottom; Match 2: #2 vs #3.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      onClick={simulateSemifinals}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 transition cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 text-emerald-600" />
+                      <span>Simulate Semis</span>
+                    </button>
+                    <button
+                      onClick={proceedToChampionship}
+                      disabled={semifinalWinners.length < 2}
+                      className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${
+                        semifinalWinners.length === 2
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <span>Swap Winners & Championship</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {semiMatches.map((sm, idx) => {
+                    const s1 = parseInt(sm.score1, 10);
+                    const s2 = parseInt(sm.score2, 10);
+                    const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
+                    const t1Won = hasWinner && s1 > s2;
+                    const t2Won = hasWinner && s2 > s1;
+
+                    return (
+                      <div key={sm.id} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+                        <div className="text-xs font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                          {sm.label}
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className={`flex-1 min-w-0 ${t1Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
+                            <div className="text-sm font-bold truncate">{sm.team1.name} {t1Won && '• Finalist'}</div>
+                            <div className="mt-1 space-y-1 text-xs">
+                              <div className="flex items-center gap-1.5">
+                                <BadgeA /> <span className="truncate">{sm.team1.playerA}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <BadgeB /> <span className="truncate">{sm.team1.playerB}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={3}
+                              value={sm.score1}
+                              onChange={(e) => handleSemiScoreChange(idx, 'score1', e.target.value)}
+                              placeholder="0"
+                              className="w-14 h-11 text-center font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            />
+                            <span className="text-xs font-bold text-slate-400">VS</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={3}
+                              value={sm.score2}
+                              onChange={(e) => handleSemiScoreChange(idx, 'score2', e.target.value)}
+                              placeholder="0"
+                              className="w-14 h-11 text-center font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            />
+                          </div>
+                          <div className={`flex-1 text-right min-w-0 ${t2Won ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}`}>
+                            <div className="text-sm font-bold truncate">{sm.team2.name} {t2Won && '• Finalist'}</div>
+                            <div className="mt-1 space-y-1 text-xs">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="truncate">{sm.team2.playerA}</span> <BadgeA />
+                              </div>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="truncate">{sm.team2.playerB}</span> <BadgeB />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* STAGE 3: CHAMPIONSHIP (SWAPPED WINNERS + BEST OF N)                   */}
+        {/* ===================================================================== */}
+        {stage === 'championship' && championshipTeams && (
+          <div className="space-y-6">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Trophy className="w-6 h-6 text-blue-600" />
+                  <span>Stage 3: Championship — Best of {bestOfCount}</span>
+                </h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Semifinal winners swapped partners. First to {championshipSummary?.winsNeeded} game win(s) takes the title.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <select
+                  value={bestOfCount}
+                  onChange={(e) => {
+                    const nextBo = parseInt(e.target.value, 10);
+                    setBestOfCount(nextBo);
+                    setChampionshipMatches(
+                      Array.from({ length: nextBo }, (_, idx) => ({
+                        id: `CG-${idx + 1}`,
+                        gameNumber: idx + 1,
+                        score1: '',
+                        score2: ''
+                      }))
+                    );
+                  }}
+                  aria-label="Select Championship Best Of"
+                  className="py-2.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold"
+                >
+                  <option value={1}>Best of 1</option>
+                  <option value={3}>Best of 3</option>
+                  <option value={5}>Best of 5</option>
+                  <option value={7}>Best of 7</option>
+                </select>
+
+                <button
+                  onClick={simulateChampionship}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/25 transition cursor-pointer"
+                >
+                  <Play className="w-4 h-4" />
+                  <span>Simulate Best-of-{bestOfCount}</span>
+                </button>
+              </div>
+            </div>
+
+            {championshipSummary?.champion && (
+              <div className="rounded-3xl bg-gradient-to-r from-blue-700 via-blue-600 to-sky-600 p-6 sm:p-8 text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                    <Award className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider bg-white/20 px-3 py-0.5 rounded-full inline-block mb-1">
+                      Champions
+                    </div>
+                    <h3 className="text-2xl sm:text-3xl font-extrabold">
+                      {championshipSummary.champion.playerA} & {championshipSummary.champion.playerB}
+                    </h3>
+                    <p className="text-sm text-white/90 mt-0.5">
+                      {championshipSummary.champion.name} • Series: {championshipSummary.champion.seriesRecord} (Best of {bestOfCount})
+                    </p>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Championship Games List */}
             <div className="space-y-4">
-              {championshipMatches.map((match, mIdx) => {
-                const s1 = parseInt(match.score1, 10);
-                const s2 = parseInt(match.score2, 10);
+              {championshipMatches.map((g, idx) => {
+                const s1 = parseInt(g.score1, 10);
+                const s2 = parseInt(g.score2, 10);
                 const hasWinner = !isNaN(s1) && !isNaN(s2) && s1 !== s2;
                 const t1Won = hasWinner && s1 > s2;
                 const t2Won = hasWinner && s2 > s1;
 
                 return (
-                  <div key={match.id} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-6 shadow-xs">
-                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
-                      <span className="text-xs font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-                        Championship Game {match.gameNumber}
-                      </span>
+                  <div key={g.id} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-xs">
+                    <div className="text-xs font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-3">
+                      Game {g.gameNumber} of Best of {bestOfCount}
                     </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-11 gap-4 items-center min-w-0">
-                      {/* Team 1 */}
-                      <div className={`md:col-span-5 p-4 rounded-2xl border transition-all min-w-0 ${
-                        t1Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                      }`}>
-                        <div className="flex items-center justify-between gap-3 mb-3">
-                          <span className="text-xs font-bold text-slate-500 uppercase">Finalist Team 1 (Swapped)</span>
+                    <div className="grid grid-cols-1 md:grid-cols-11 gap-4 items-center">
+                      <div className={`md:col-span-5 p-4 rounded-2xl border ${t1Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800'}`}>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team1.name}</span>
                           <input
                             type="text"
                             inputMode="numeric"
                             maxLength={3}
-                            value={match.score1}
-                            onChange={(e) => handleChampionshipScoreChange(mIdx, 'score1', e.target.value)}
+                            value={g.score1}
+                            onChange={(e) => handleChampionshipScoreChange(idx, 'score1', e.target.value)}
                             placeholder="0"
-                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs"
+                            className="w-14 h-11 text-center font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                           />
                         </div>
-                        <div className="space-y-1.5 text-sm font-bold">
-                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
-                            <span className="truncate">{match.team1.playerA}</span> <BadgeA />
-                          </div>
-                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
-                            <span className="truncate">{match.team1.playerB}</span> <BadgeB />
-                          </div>
+                        <div className="text-sm font-bold flex items-center justify-between">
+                          <span>{championshipTeams.team1.playerA} & {championshipTeams.team1.playerB}</span>
+                          {t1Won && <span className="text-xs text-emerald-600 font-extrabold">WIN</span>}
                         </div>
                       </div>
 
-                      {/* VS */}
-                      <div className="md:col-span-1 flex justify-center py-2">
-                        <span className="font-extrabold text-xs text-slate-400">VS</span>
-                      </div>
+                      <div className="md:col-span-1 text-center font-extrabold text-xs text-slate-400">VS</div>
 
-                      {/* Team 2 */}
-                      <div className={`md:col-span-5 p-4 rounded-2xl border transition-all min-w-0 ${
-                        t2Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
-                      }`}>
-                        <div className="flex items-center justify-between gap-3 mb-3">
-                          <span className="text-xs font-bold text-slate-500 uppercase">Finalist Team 2 (Swapped)</span>
+                      <div className={`md:col-span-5 p-4 rounded-2xl border ${t2Won ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800'}`}>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-bold uppercase text-slate-500">{championshipTeams.team2.name}</span>
                           <input
                             type="text"
                             inputMode="numeric"
                             maxLength={3}
-                            value={match.score2}
-                            onChange={(e) => handleChampionshipScoreChange(mIdx, 'score2', e.target.value)}
+                            value={g.score2}
+                            onChange={(e) => handleChampionshipScoreChange(idx, 'score2', e.target.value)}
                             placeholder="0"
-                            className="w-14 h-12 text-center font-bold text-base rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs"
+                            className="w-14 h-11 text-center font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                           />
                         </div>
-                        <div className="space-y-1.5 text-sm font-bold">
-                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
-                            <span className="truncate">{match.team2.playerA}</span> <BadgeA />
-                          </div>
-                          <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200/70 dark:border-slate-800">
-                            <span className="truncate">{match.team2.playerB}</span> <BadgeB />
-                          </div>
+                        <div className="text-sm font-bold flex items-center justify-between">
+                          <span>{championshipTeams.team2.playerA} & {championshipTeams.team2.playerB}</span>
+                          {t2Won && <span className="text-xs text-emerald-600 font-extrabold">WIN</span>}
                         </div>
                       </div>
                     </div>

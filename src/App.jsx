@@ -361,7 +361,7 @@ export default function App() {
     setErrorMsg('');
   };
 
-  // --- TRANSITION TO PLAYOFFS (Requirements 2 & 3) ---
+  // --- TRANSITION TO PLAYOFFS ---
   const advanceToPlotform = () => {
     if (completedQualifyingMatches < totalQualifyingMatchesCount) {
       setErrorMsg(`Please complete all ${totalQualifyingMatchesCount} qualifying matches first (${completedQualifyingMatches}/${totalQualifyingMatchesCount} completed).`);
@@ -369,43 +369,38 @@ export default function App() {
     }
 
     const topTeams = ladderStandings.slice(0, playoffTeamCount);
-    
-    // Requirement 2: In the playoffs, randomize doubles players. 
-    // However, if exactly 6 teams proceed to the playoffs, swap player in top 2 teams to make doubles.
-    let playoffTeamsConstructed = [];
+    const playoffTeamsConstructed = [];
 
-    if (playoffTeamCount === 6) {
-      // Top 2 teams special swap: Team 1 (A1, B1) and Team 2 (A2, B2) -> swap player B1 and B2 (or A/B)
-      // Let's create new teams for all top 6 with randomized or specific rules.
-      // Rule states: "if 6teams in playoff, swap player in top 2 teams to make doubles"
-      const t1 = topTeams[0];
-      const t2 = topTeams[1];
-      
-      const modifiedT1 = { id: t1.id, name: `${t1.name} (Mod)`, playerA: t1.playerA, playerB: t2.playerB };
-      const modifiedT2 = { id: t2.id, name: `${t2.name} (Mod)`, playerA: t2.playerA, playerB: t1.playerB };
-      
-      const remainingTeams = topTeams.slice(2).map(t => {
-        const shuffledPlayers = shuffleArray([t.playerA, t.playerB]);
-        return { id: t.id, name: t.name, playerA: shuffledPlayers[0], playerB: shuffledPlayers[1] };
-      });
+    // Adjacent Rank Partner Swap (1<->2, 3<->4, ...) with sequential playoff naming starting at Team 1
+    for (let i = 0; i < topTeams.length; i += 2) {
+      const t1 = topTeams[i];
+      const t2 = topTeams[i + 1];
 
-      playoffTeamsConstructed = [modifiedT1, modifiedT2, ...remainingTeams];
-    } else {
-      // Randomize doubles players for each playoff team from the qualified group players
-      const allPlayersInPlayoffs = [];
-      topTeams.forEach(t => {
-        allPlayersInPlayoffs.push(t.playerA, t.playerB);
-      });
-      const shuffledPlayoffPlayers = shuffleArray(allPlayersInPlayoffs);
-      
-      playoffTeamsConstructed = [];
-      for (let i = 0; i < playoffTeamCount; i++) {
-        const origTeam = topTeams[i];
+      if (t2) {
+        const team1Num = playoffTeamsConstructed.length + 1;
+        const team2Num = team1Num + 1;
+
+        playoffTeamsConstructed.push(
+          {
+            id: `PT${team1Num}`,
+            name: `Team ${team1Num}`,
+            playerA: t1.playerA,
+            playerB: t2.playerB
+          },
+          {
+            id: `PT${team2Num}`,
+            name: `Team ${team2Num}`,
+            playerA: t2.playerA,
+            playerB: t1.playerB
+          }
+        );
+      } else {
+        const teamNum = playoffTeamsConstructed.length + 1;
         playoffTeamsConstructed.push({
-          id: origTeam.id,
-          name: origTeam.name,
-          playerA: shuffledPlayoffPlayers[i * 2],
-          playerB: shuffledPlayoffPlayers[i * 2 + 1]
+          id: `PT${teamNum}`,
+          name: `Team ${teamNum}`,
+          playerA: t1.playerA,
+          playerB: t1.playerB
         });
       }
     }
